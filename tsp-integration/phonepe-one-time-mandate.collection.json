@@ -1,0 +1,417 @@
+{
+  "info": {
+    "_postman_id": "d4f3b8a2-1e6c-4a7b-9c22-3f8b1a0e5d67",
+    "name": "PhonePe One Time Mandate (OTM) v2",
+    "description": "PhonePe Payment Gateway - One Time Mandate (OTM) APIs.\n\nIntroduction: A One Time Mandate (OTM) is a \"hold now, charge later\" feature for UPI payments. Instead of immediately debiting the customer's bank account when they pay, OTM places a temporary block (authorization) on those funds. You can later Capture the money (full or partial), or Cancel to release the hold if the order is cancelled. Set `paymentFlow.delayedCapture=true` on the Pay call to authorize instead of capture; the order enters `PENDING` state and the transaction moves to `AUTHORIZATION_IN_PROGRESS` until the user approves the mandate on their UPI app, then to `AUTHORIZED`. Wait for the authorization webhook before calling Capture.\n\nFolders:\n- Authorization -> Get Access Token\n- OTM Payment -> Initiate OTM Authorization (Pay), Capture Authorized Payment, Cancel Authorized Payment\n- Status -> Check Order Status, Check Transaction Status\n- Webhooks (Mock Server) -> Transaction Authorized / Order Completed / Order Failed / Transaction Failed callbacks\n\nCredentials: set client_id, client_version, client_secret and tsp_env in the environment. merchantOrderId is auto-generated on every Pay run by scripts, and orderId/transactionId are captured from responses; the access token is fetched/refreshed automatically.\n\nEnvironments:\n- Sandbox: https://api-preprod.phonepe.com/apis/pg-sandbox/<Endpoint>\n- Production: Authorization API https://api.phonepe.com/apis/identity-manager/<Endpoint> ; Other APIs https://api.phonepe.com/apis/pg/<Endpoint>\n\nAPI Endpoints:\n- Authorization              POST /v1/oauth/token\n- Initiate OTM Authorization POST /payments/v2/pay\n- Capture Authorized Payment POST /payments/v2/capture\n- Cancel Authorized Payment  POST /payments/v2/{merchantOrderId}/cancel\n- Check Order Status         GET  /payments/v2/order/{merchantOrderId}/status\n- Check Transaction Status   GET  /payments/v2/transaction/{transactionId}/status\n\nDocumentation:\n- Introduction:       https://developer.phonepe.com/payment-gateway/one-time-mandate/introduction\n- Authorization:      https://developer.phonepe.com/payment-gateway/one-time-mandate/authentication\n- Pay:                https://developer.phonepe.com/payment-gateway/one-time-mandate/pay\n- Capture:            https://developer.phonepe.com/payment-gateway/one-time-mandate/capture\n- Cancel:             https://developer.phonepe.com/payment-gateway/one-time-mandate/cancel\n- Order Status:       https://developer.phonepe.com/payment-gateway/one-time-mandate/order-status\n- Transaction Status: https://developer.phonepe.com/payment-gateway/one-time-mandate/transaction-status\n- Webhook Handling:   https://developer.phonepe.com/payment-gateway/one-time-mandate/webhook-handling\n- UAT Sandbox:        https://developer.phonepe.com/payment-gateway/one-time-mandate/uat-sandbox",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const env = pm.environment.get('tsp_env') || 'sandbox';",
+          "const isProd = env === 'production';",
+          "const authUrl = isProd",
+          "  ? 'https://api.phonepe.com/apis/identity-manager/v1/oauth/token'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token';",
+          "const apiBase = isProd",
+          "  ? 'https://api.phonepe.com/apis/pg'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox';",
+          "pm.environment.set('auth_url', authUrl);",
+          "pm.environment.set('api_base_url', apiBase);",
+          "",
+          "const location = pm.execution.location || [];",
+          "const isAuthorizationRequest = location.includes('Authorization');",
+          "const isWebhook = location.includes('Webhooks (Mock Server)');",
+          "if (isAuthorizationRequest || isWebhook) {",
+          "  return;",
+          "}",
+          "",
+          "const token = pm.environment.get('access_token') || '';",
+          "if (!token) {",
+          "  throw new Error('Missing access_token. Run Authorization/Get Access Token first.');",
+          "}",
+          "pm.request.headers.upsert({ key: 'Authorization', value: `O-Bearer ${token}` });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Authorization",
+      "item": [
+        {
+          "name": "Get Access Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "client_id", "value": "{{client_id}}", "type": "text" },
+                { "key": "client_version", "value": "{{client_version}}", "type": "text" },
+                { "key": "client_secret", "value": "{{client_secret}}", "type": "text" },
+                { "key": "grant_type", "value": "client_credentials", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{auth_url}}",
+              "host": ["{{auth_url}}"]
+            },
+            "description": "Generate the O-Bearer access token required to authenticate all OTM API requests. Include the returned access_token in the Authorization header (O-Bearer <token>) for all subsequent calls, and refresh before expires_at. https://developer.phonepe.com/payment-gateway/one-time-mandate/authentication"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Auth success', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "pm.environment.set('access_token', data.access_token || '');",
+                  "pm.environment.set('token_type', data.token_type || 'O-Bearer');",
+                  "pm.environment.set('token_expires_at', String(data.expires_at || 0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OTM Payment",
+      "item": [
+        {
+          "name": "Initiate OTM Authorization (Pay)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{merchant_order_id}}\",\n  \"merchantUserId\": \"{{merchant_user_id}}\",\n  \"currency\": \"INR\",\n  \"amount\": {{otm_amount}},\n  \"paymentFlow\": {\n    \"type\": \"PG\",\n    \"delayedCapture\": true,\n    \"paymentMode\": {\n      \"type\": \"UPI_INTENT\"\n    },\n    \"merchantUrls\": {\n      \"redirectUrl\": \"{{redirect_url}}\",\n      \"cancelRedirectUrl\": \"{{cancel_redirect_url}}\"\n    }\n  },\n  \"metaInfo\": {\n    \"udf1\": \"udf1\",\n    \"udf2\": \"udf2\"\n  },\n  \"deviceContext\": {\n    \"deviceOS\": \"{{device_os}}\"\n  },\n  \"expireAfter\": {{otm_expire_after}}\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/payments/v2/pay",
+              "host": ["{{api_base_url}}"],
+              "path": ["payments", "v2", "pay"]
+            },
+            "description": "Initiate the OTM authorization. delayedCapture must be true for OTM: the funds are authorized (held) rather than captured. The order enters PENDING and the transaction enters AUTHORIZATION_IN_PROGRESS until the user approves the mandate on their UPI app. paymentMode.type allows UPI_INTENT or UPI_QR; the response returns intentUrl (UPI_INTENT) or qrData (UPI_QR). amount min 100 paise; expireAfter 300-5184000 seconds. https://developer.phonepe.com/payment-gateway/one-time-mandate/pay"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const stamp = Date.now();",
+                  "pm.environment.set('merchant_order_id', 'ORDER_' + stamp);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Pay initiated', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data.orderId) { pm.environment.set('order_id', data.orderId); }",
+                  "if (data.intentUrl) { pm.environment.set('otm_intent_url', data.intentUrl); }",
+                  "if (Array.isArray(data.paymentDetails) && data.paymentDetails[0] && data.paymentDetails[0].transactionId) {",
+                  "  pm.environment.set('transaction_id', data.paymentDetails[0].transactionId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capture Authorized Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{merchant_order_id}}\",\n  \"currency\": \"INR\",\n  \"amount\": {{otm_capture_amount}}\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/payments/v2/capture",
+              "host": ["{{api_base_url}}"],
+              "path": ["payments", "v2", "capture"]
+            },
+            "description": "Collect the funds after a successful authorization. Only callable when the transaction state is AUTHORIZED (wait for the authorization webhook first); any other state returns INVALID_TRANSACTION_STATE. You may capture a partial amount (<= the authorized amount). amount min 100 paise. Response returns state CAPTURE_IN_PROGRESS. https://developer.phonepe.com/payment-gateway/one-time-mandate/capture"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Capture accepted', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.orderId) { pm.environment.set('order_id', data.orderId); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel Authorized Payment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{api_base_url}}/payments/v2/{{merchant_order_id}}/cancel",
+              "host": ["{{api_base_url}}"],
+              "path": ["payments", "v2", "{{merchant_order_id}}", "cancel"]
+            },
+            "description": "Cancel an active OTM authorization, releasing the hold on the user's funds. Only callable after the transaction has reached the AUTHORIZED state. Returns HTTP 202 Accepted with no response body; the order eventually moves to FAILED with errorCode PAYMENT_CANCELLED (the expected terminal state for cancelled authorizations). https://developer.phonepe.com/payment-gateway/one-time-mandate/cancel"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cancel accepted (202)', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 202]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Status",
+      "item": [
+        {
+          "name": "Check Order Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/payments/v2/order/{{merchant_order_id}}/status?details=true",
+              "host": ["{{api_base_url}}"],
+              "path": ["payments", "v2", "order", "{{merchant_order_id}}", "status"],
+              "query": [
+                { "key": "details", "value": "true" },
+                { "key": "settlementDetails", "value": "false", "disabled": true },
+                { "key": "errorContext", "value": "false", "disabled": true }
+              ]
+            },
+            "description": "Poll or verify the comprehensive status of an OTM order by merchantOrderId. Returns order-level details plus underlying transaction states (AUTHORIZATION_IN_PROGRESS, AUTHORIZED, CAPTURE_IN_PROGRESS, COMPLETED, CANCEL_IN_PROGRESS, FAILED). Query params: details=true returns all transaction-level payment details; settlementDetails=true includes settlement info; errorContext=true includes detailed error context. https://developer.phonepe.com/payment-gateway/one-time-mandate/order-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Order status fetched', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.orderId) { pm.environment.set('order_id', data.orderId); }",
+                  "if (data && Array.isArray(data.paymentDetails) && data.paymentDetails[0] && data.paymentDetails[0].transactionId) {",
+                  "  pm.environment.set('transaction_id', data.paymentDetails[0].transactionId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check Transaction Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/payments/v2/transaction/{{transaction_id}}/status",
+              "host": ["{{api_base_url}}"],
+              "path": ["payments", "v2", "transaction", "{{transaction_id}}", "status"],
+              "query": [
+                { "key": "errorContext", "value": "false", "disabled": true }
+              ]
+            },
+            "description": "Check the status of a specific payment attempt by its transactionId (from the pay response or order status response). Returns the associated order data alongside details of that single transaction. Unlike Order Status, this endpoint does not support the details or settlementDetails query params (errorContext is supported). https://developer.phonepe.com/payment-gateway/one-time-mandate/transaction-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Transaction status fetched', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Webhooks (Mock Server)",
+      "description": "Create a Postman Mock Server from this folder. The saved examples below simulate PhonePe OTM S2S callbacks. Configure your webhook on the PhonePe Business Dashboard (Developer Settings -> Webhook) using HMAC or SHA (Basic) auth. For SHA, validate the incoming Authorization header as SHA256(username:password). Supported events: pg.order.completed, pg.order.failed, pg.transaction.failed (pg.transaction.authorized notifies when a mandate is authorized). https://developer.phonepe.com/payment-gateway/one-time-mandate/webhook-handling",
+      "item": [
+        {
+          "name": "Transaction Authorized",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"PG_TRANSACTION_ATTEMPT_AUTHORIZED\",\n  \"event\": \"pg.transaction.authorized\",\n  \"payload\": {\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"state\": \"PENDING\",\n    \"amount\": {{otm_amount}}\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/otm/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["otm", "webhook"]
+            },
+            "description": "Sent when a mandate is authorized on the UPI app. The transaction is now AUTHORIZED; you may call Capture or Cancel."
+          },
+          "response": [
+            {
+              "name": "Transaction authorized callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/otm/webhook", "host": ["{{mock_base_url}}"], "path": ["otm", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"type\": \"PG_TRANSACTION_ATTEMPT_AUTHORIZED\",\n  \"event\": \"pg.transaction.authorized\",\n  \"payload\": {\n    \"merchantId\": \"M_001\",\n    \"merchantOrderId\": \"ORDER_123456\",\n    \"orderId\": \"OMO2506...\",\n    \"state\": \"PENDING\",\n    \"currency\": \"INR\",\n    \"amount\": 10000,\n    \"expireAt\": 1750000000000,\n    \"paymentDetails\": [\n      {\n        \"transactionId\": \"OMT2506...\",\n        \"paymentMode\": \"UPI_INTENT\",\n        \"state\": \"AUTHORIZED\",\n        \"amount\": 0,\n        \"currency\": \"INR\",\n        \"authAmount\": 10000,\n        \"authCurrency\": \"INR\",\n        \"payableCurrency\": \"INR\",\n        \"payableAmount\": 0,\n        \"feeCurrency\": \"INR\",\n        \"feeAmount\": 0,\n        \"timestamp\": 1749999000000,\n        \"instrument\": { \"type\": \"ACCOUNT\", \"processingRail\": \"UPI\" },\n        \"rail\": { \"type\": \"UPI\" }\n      }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Order Completed",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"PG_ORDER_COMPLETED\",\n  \"event\": \"pg.order.completed\",\n  \"payload\": {\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"state\": \"COMPLETED\",\n    \"amount\": {{otm_capture_amount}}\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/otm/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["otm", "webhook"]
+            },
+            "description": "Sent when an order is successfully completed (capture succeeded)."
+          },
+          "response": [
+            {
+              "name": "Order completed callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/otm/webhook", "host": ["{{mock_base_url}}"], "path": ["otm", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"type\": \"PG_ORDER_COMPLETED\",\n  \"event\": \"pg.order.completed\",\n  \"payload\": {\n    \"merchantId\": \"M_001\",\n    \"merchantOrderId\": \"ORDER01\",\n    \"orderId\": \"OMO2607171048305486053103V\",\n    \"state\": \"COMPLETED\",\n    \"currency\": \"INR\",\n    \"amount\": 100,\n    \"payableCurrency\": \"INR\",\n    \"payableAmount\": 100,\n    \"feeCurrency\": \"INR\",\n    \"feeAmount\": 0,\n    \"expireAt\": 1784265990538,\n    \"paymentDetails\": [\n      {\n        \"transactionId\": \"OM2607171048305656053482V\",\n        \"paymentMode\": \"UPI_QR\",\n        \"timestamp\": 1784265510598,\n        \"currency\": \"INR\",\n        \"amount\": 100,\n        \"authAmount\": 100,\n        \"authCurrency\": \"INR\",\n        \"payableCurrency\": \"INR\",\n        \"payableAmount\": 100,\n        \"feeCurrency\": \"INR\",\n        \"feeAmount\": 0,\n        \"state\": \"COMPLETED\",\n        \"instrument\": { \"type\": \"ACCOUNT\", \"accountType\": \"SAVINGS\", \"bankId\": \"SBIN\" },\n        \"rail\": { \"type\": \"UPI\", \"utr\": \"619821250213\", \"upiTransactionId\": \"YBL90bb442e0b7249139237a8cc8b6d7a08\" }\n      }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Order Failed",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"PG_ORDER_FAILED\",\n  \"event\": \"pg.order.failed\",\n  \"payload\": {\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"state\": \"FAILED\",\n    \"amount\": {{otm_amount}}\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/otm/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["otm", "webhook"]
+            },
+            "description": "Sent when an order fails (authorization failed, capture failed, or cancelled). A successful cancellation is reported here with state FAILED and errorCode PAYMENT_CANCELLED."
+          },
+          "response": [
+            {
+              "name": "Order failed callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/otm/webhook", "host": ["{{mock_base_url}}"], "path": ["otm", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"type\": \"PG_ORDER_FAILED\",\n  \"event\": \"pg.order.failed\",\n  \"payload\": {\n    \"merchantId\": \"M_001\",\n    \"merchantOrderId\": \"ORDER012\",\n    \"orderId\": \"OMO2607171050501339612835V\",\n    \"state\": \"FAILED\",\n    \"currency\": \"INR\",\n    \"amount\": 100,\n    \"expireAt\": 1784266130117,\n    \"errorCode\": \"INVALID_MPIN\",\n    \"detailedErrorCode\": \"ZM\",\n    \"paymentDetails\": [\n      {\n        \"transactionId\": \"OM2607171050501509612164V\",\n        \"paymentMode\": \"UPI_QR\",\n        \"timestamp\": 1784265650199,\n        \"currency\": \"INR\",\n        \"amount\": 0,\n        \"authAmount\": 100,\n        \"authCurrency\": \"INR\",\n        \"payableCurrency\": \"INR\",\n        \"payableAmount\": 0,\n        \"feeCurrency\": \"INR\",\n        \"feeAmount\": 0,\n        \"state\": \"FAILED\",\n        \"errorCode\": \"INVALID_MPIN\",\n        \"detailedErrorCode\": \"ZM\"\n      }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Transaction Failed",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"PG_TRANSACTION_ATTEMPT_FAILED\",\n  \"event\": \"pg.transaction.failed\",\n  \"payload\": {\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"state\": \"PENDING\",\n    \"amount\": {{otm_amount}}\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/otm/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["otm", "webhook"]
+            },
+            "description": "Sent when a transaction attempt fails while the order is still PENDING (e.g., authorization failure with retries remaining)."
+          },
+          "response": [
+            {
+              "name": "Transaction failed callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/otm/webhook", "host": ["{{mock_base_url}}"], "path": ["otm", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"type\": \"PG_TRANSACTION_ATTEMPT_FAILED\",\n  \"event\": \"pg.transaction.failed\",\n  \"payload\": {\n    \"merchantId\": \"M_001\",\n    \"merchantOrderId\": \"ORDER_123456\",\n    \"orderId\": \"OMO2506...\",\n    \"state\": \"PENDING\",\n    \"currency\": \"INR\",\n    \"amount\": 10000,\n    \"expireAt\": 1750000000000,\n    \"paymentDetails\": [\n      {\n        \"transactionId\": \"OMT2506...\",\n        \"paymentMode\": \"UPI_INTENT\",\n        \"state\": \"FAILED\",\n        \"amount\": 0,\n        \"currency\": \"INR\",\n        \"authAmount\": 10000,\n        \"authCurrency\": \"INR\",\n        \"errorCode\": \"TIMED_OUT\",\n        \"detailedErrorCode\": \"MANDATE_EXPIRED\",\n        \"timestamp\": 1749999000000,\n        \"instrument\": { \"type\": \"ACCOUNT\", \"processingRail\": \"UPI\" },\n        \"rail\": { \"type\": \"UPI\" }\n      }\n    ]\n  }\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

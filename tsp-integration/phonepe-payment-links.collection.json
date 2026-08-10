@@ -1,0 +1,393 @@
+{
+  "info": {
+    "_postman_id": "e7a1c9d3-2f4b-4a8e-b6d1-90c3e5f7a2b8",
+    "name": "PhonePe PG V2 Payment Links",
+    "description": "PhonePe Payment Gateway - PG V2 Payment Links APIs.\n\nIntroduction: A Payment Link is a unique, shareable checkout URL you generate via API and send to your customer over SMS, email, WhatsApp, etc. The customer opens the link and completes payment using UPI, Cards, or NetBanking on a PhonePe-hosted checkout page - no website or app integration required on your side. You create the link (Create Payment Link), optionally re-notify the customer (Notify), track it (Payment Link Status), cancel it if no longer needed (Cancel), and refund a completed payment (Refund / Refund Status). Payment completion/failure is delivered to your server via webhooks.\n\nFolders:\n- Authorization -> Get Access Token\n- Payment Links -> Create Payment Link, Check Payment Link Status, Notify Customer, Cancel Payment Link\n- Refund -> Initiate Refund, Check Refund Status\n- Webhooks (Mock Server) -> paylink.order.completed / paylink.order.failed callbacks\n\nCredentials: set client_id, client_version, client_secret and tsp_env in the environment. merchantOrderId is auto-generated on every Create run by scripts, and orderId/paylinkUrl are captured from responses; the access token is fetched/refreshed automatically.\n\nEnvironments:\n- Sandbox: https://api-preprod.phonepe.com/apis/pg-sandbox/<Endpoint>\n- Production: Authorization API https://api.phonepe.com/apis/identity-manager/<Endpoint> ; Other APIs https://api.phonepe.com/apis/pg/<Endpoint>\n\nAPI Endpoints:\n- Authorization            POST /v1/oauth/token\n- Create Payment Link      POST /paylinks/v1/pay\n- Check Payment Link Status GET  /paylinks/v1/{merchantOrderId}/status?details=true\n- Notify Customer          POST /paylinks/v1/notify\n- Cancel Payment Link      POST /paylinks/v1/{merchantOrderId}/cancel\n- Initiate Refund          POST /payments/v2/refund\n- Check Refund Status      GET  /payments/v2/refund/{merchantRefundId}/status\n\nNote: For Partner integrations, add an X-MERCHANT-ID header with the end merchant's MerchantID on every call.\n\nDocumentation:\n- Introduction              https://developer.phonepe.com/phonepe-payment-gateway/pg-v2-payment-links\n- Authorization             https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/authorization\n- Create Payment Link       https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/create-payment-links\n- Payment Link Status       https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/payment-link-status\n- Notify Customer           https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/notify\n- Cancel Payment Link       https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/cancel\n- Refund                    https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/refund\n- Webhook Handling          https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/webhook\n- UAT Sandbox               https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/uat-sandbox",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const env = pm.environment.get('tsp_env') || 'sandbox';",
+          "const isProd = env === 'production';",
+          "const authUrl = isProd",
+          "  ? 'https://api.phonepe.com/apis/identity-manager/v1/oauth/token'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token';",
+          "const apiBase = isProd",
+          "  ? 'https://api.phonepe.com/apis/pg'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox';",
+          "pm.environment.set('auth_url', authUrl);",
+          "pm.environment.set('api_base_url', apiBase);",
+          "",
+          "const location = pm.execution.location || [];",
+          "const isAuthorizationRequest = location.includes('Authorization');",
+          "const isWebhook = location.includes('Webhooks (Mock Server)');",
+          "if (isAuthorizationRequest || isWebhook) {",
+          "  return;",
+          "}",
+          "",
+          "const token = pm.environment.get('access_token') || '';",
+          "if (!token) {",
+          "  throw new Error('Missing access_token. Run Authorization/Get Access Token first.');",
+          "}",
+          "pm.request.headers.upsert({ key: 'Authorization', value: `O-Bearer ${token}` });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Authorization",
+      "item": [
+        {
+          "name": "Get Access Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "client_id", "value": "{{client_id}}", "type": "text" },
+                { "key": "client_version", "value": "{{client_version}}", "type": "text" },
+                { "key": "client_secret", "value": "{{client_secret}}", "type": "text" },
+                { "key": "grant_type", "value": "client_credentials", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{auth_url}}",
+              "host": ["{{auth_url}}"]
+            },
+            "description": "Generate the O-Bearer access token required to authenticate all Payment Links API requests. Include the returned access_token in the Authorization header (O-Bearer <token>) for all subsequent calls, and refresh before expires_at. https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/authorization"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Auth success', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "pm.environment.set('access_token', data.access_token || '');",
+                  "pm.environment.set('token_type', data.token_type || 'O-Bearer');",
+                  "pm.environment.set('token_expires_at', String(data.expires_at || 0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Payment Links",
+      "item": [
+        {
+          "name": "Create Payment Link",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{merchant_order_id}}\", // auto-generated each run (ORDER_<timestamp>)\n  \"description\": \"Early Bird Ticket: 2026 Annual Tech Conference\", // enter the link description shown to the customer\n  \"amount\": {{paylink_amount}}, // enter your amount here in paisa (min 1)\n  \"paymentFlow\": {\n    \"type\": \"PAYLINK\",\n    \"customerDetails\": {\n      \"name\": \"{{customer_name}}\", // enter the customer name here\n      \"phoneNumber\": \"{{customer_phone}}\", // mandatory - enter customer phone (+9197xxxxxx89 or 97xxxxxx89, no spaces/hyphens)\n      \"email\": \"{{customer_email}}\" // enter the customer email here\n    },\n    \"notificationChannels\": {\n      \"SMS\": false, // set true to have PhonePe deliver the link over SMS\n      \"EMAIL\": false // set true to have PhonePe deliver the link over email\n    },\n    \"expireAt\": {{paylink_expire_at}} // enter link expiry here in epoch ms (auto-defaulted to now+7d; max 45d)\n  },\n  \"metaInfo\": {\n    \"udf1\": \"udf1\", // optional passthrough fields udf1-udf5\n    \"udf2\": \"udf2\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/paylinks/v1/pay",
+              "host": ["{{api_base_url}}"],
+              "path": ["paylinks", "v1", "pay"]
+            },
+            "description": "Generate a unique, shareable payment link for a customer. amount is in paisa (min 1). paymentFlow.type must be PAYLINK; customerDetails.phoneNumber is mandatory (formats +9197xxxxxx89 or 97xxxxxx89, no spaces/hyphens). expireAt is an epoch timestamp in milliseconds (default 30 days, max 45 days from now; must be in the future). Set notificationChannels.SMS/EMAIL to true to have PhonePe deliver the link. The response returns paylinkUrl (the checkout URL) and orderId, and state ACTIVE. https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/create-payment-links"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const stamp = Date.now();",
+                  "pm.environment.set('merchant_order_id', 'ORDER_' + stamp);",
+                  "// Default expireAt to 7 days from now (ms) if not set",
+                  "if (!pm.environment.get('paylink_expire_at')) {",
+                  "  pm.environment.set('paylink_expire_at', String(stamp + 7 * 24 * 60 * 60 * 1000));",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Payment link created', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data.orderId) { pm.environment.set('order_id', data.orderId); }",
+                  "if (data.paylinkUrl) { pm.environment.set('paylink_url', data.paylinkUrl); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check Payment Link Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/paylinks/v1/{{merchant_order_id}}/status?details=true",
+              "host": ["{{api_base_url}}"],
+              "path": ["paylinks", "v1", "{{merchant_order_id}}", "status"],
+              "query": [
+                { "key": "details", "value": "true" }
+              ]
+            },
+            "description": "Track the real-time status of a payment link by merchantOrderId. state reflects the link lifecycle: ACTIVE (no successful payment yet), COMPLETED, FAILED, EXPIRED, or CANCELLED. details=true returns every payment attempt in paymentDetails; details=false returns only the most recent attempt. Always rely on the top-level state to confirm the outcome. https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/payment-link-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status fetched', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.orderId) { pm.environment.set('order_id', data.orderId); }",
+                  "if (data && Array.isArray(data.paymentDetails) && data.paymentDetails[0] && data.paymentDetails[0].transactionId) {",
+                  "  pm.environment.set('transaction_id', data.paymentDetails[0].transactionId);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Notify Customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{merchant_order_id}}\", // enter the order id of the link to re-notify\n  \"notificationChannels\": {\n    \"sms\": true, // set true to re-send over SMS\n    \"email\": false // set true to re-send over email\n  }\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/paylinks/v1/notify",
+              "host": ["{{api_base_url}}"],
+              "path": ["paylinks", "v1", "notify"]
+            },
+            "description": "Re-send an existing payment link to the customer over SMS and/or email. Set notificationChannels.sms / notificationChannels.email to true for the channels you want. Returns the paylinkUrl and orderId. There is a cap on notification attempts - exceeding it returns NOTIFICATION_ATTEMPTS_BREACHED. https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/notify"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Notify accepted', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.paylinkUrl) { pm.environment.set('paylink_url', data.paylinkUrl); }",
+                  "if (data && data.orderId) { pm.environment.set('order_id', data.orderId); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cancel Payment Link",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/paylinks/v1/{{merchant_order_id}}/cancel",
+              "host": ["{{api_base_url}}"],
+              "path": ["paylinks", "v1", "{{merchant_order_id}}", "cancel"]
+            },
+            "description": "Deactivate an active payment link so it can no longer be paid. On success the response returns state CANCELLED. A link already in a terminal state (COMPLETED / EXPIRED / CANCELLED) returns BAD_REQUEST ('already in terminal state'). https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/cancel"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cancel accepted', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.orderId) { pm.environment.set('order_id', data.orderId); }"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Refund",
+      "item": [
+        {
+          "name": "Initiate Refund",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantRefundId\": \"{{merchant_refund_id}}\", // auto-generated each run by pre-request script (REFUND_<timestamp>)\n  \"originalMerchantOrderId\": \"{{merchant_order_id}}\", // enter the original order id to refund here\n  \"amount\": {{refund_amount}} // enter refund amount here in paisa (min 100, must be <= captured amount)\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/payments/v2/refund",
+              "host": ["{{api_base_url}}"],
+              "path": ["payments", "v2", "refund"]
+            },
+            "description": "Refund a payment made through a payment link. merchantRefundId is a unique ID you generate (max 63 chars). originalMerchantOrderId is the order you are refunding. amount is in paisa (min 100) and must be <= the amount originally captured. Response returns refundId and state PENDING. https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/refund"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('merchant_refund_id', 'REFUND_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Refund initiated', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.refundId) { pm.environment.set('refund_id', data.refundId); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check Refund Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/payments/v2/refund/{{merchant_refund_id}}/status",
+              "host": ["{{api_base_url}}"],
+              "path": ["payments", "v2", "refund", "{{merchant_refund_id}}", "status"]
+            },
+            "description": "Track the progress of a refund by the merchantRefundId you supplied at initiation. state is one of PENDING, COMPLETED, or FAILED. splitInstruments describes how the refund amount was returned across rails/instruments; errorCode/detailedErrorCode are present only on FAILED. https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/refund/#nav-check-refund-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Refund status fetched', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Webhooks (Mock Server)",
+      "description": "Create a Postman Mock Server from this folder. The saved examples below simulate PhonePe Payment Link S2S callbacks. Configure your webhook on the PhonePe Business Dashboard (Developer Settings -> Webhook) using HMAC or SHA (Basic) auth. For SHA, validate the incoming Authorization header as SHA256(username:password). Supported events: paylink.order.completed, paylink.order.failed. https://developer.phonepe.com/payment-gateway/payment-links/api-reference-payment-links/webhook",
+      "item": [
+        {
+          "name": "Paylink Order Completed",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"paylink.order.completed\",\n  \"payload\": {\n    \"orderId\": \"{{order_id}}\",\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"state\": \"COMPLETED\",\n    \"amount\": {{paylink_amount}}\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/paylink/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["paylink", "webhook"]
+            },
+            "description": "Sent when a payment link order is successfully completed."
+          },
+          "response": [
+            {
+              "name": "Paylink order completed callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/paylink/webhook", "host": ["{{mock_base_url}}"], "path": ["paylink", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"event\": \"paylink.order.completed\",\n  \"payload\": {\n    \"orderId\": \"OMOxx\",\n    \"merchantId\": \"merchantId\",\n    \"merchantOrderId\": \"merchantOrderId\",\n    \"state\": \"COMPLETED\",\n    \"amount\": 10000,\n    \"expireAt\": 1291391291,\n    \"metaInfo\": {\n      \"udf1\": \"\",\n      \"udf2\": \"\",\n      \"udf3\": \"\",\n      \"udf4\": \"\"\n    },\n    \"paymentFlow\": {\n      \"type\": \"PAYLINK\",\n      \"paylinkUrl\": \"https://phon.pe/some-key\"\n    },\n    \"paymentDetails\": [\n      {\n        \"paymentMode\": \"UPI_QR\",\n        \"transactionId\": \"OM12334\",\n        \"timestamp\": 12121212,\n        \"amount\": 10000,\n        \"state\": \"COMPLETED\",\n        \"splitInstruments\": [\n          {\n            \"amount\": 10000,\n            \"rail\": {\n              \"type\": \"UPI\",\n              \"upiTransactionId\": \"upi12313\",\n              \"vpa\": \"12****78@ybl\"\n            },\n            \"instrument\": {\n              \"type\": \"ACCOUNT\",\n              \"accountType\": \"SAVINGS\",\n              \"accountNumber\": \"******1234\"\n            }\n          }\n        ]\n      }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Paylink Order Failed",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"paylink.order.failed\",\n  \"payload\": {\n    \"orderId\": \"{{order_id}}\",\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"state\": \"FAILED\",\n    \"amount\": {{paylink_amount}}\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/paylink/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["paylink", "webhook"]
+            },
+            "description": "Sent when a payment link order fails."
+          },
+          "response": [
+            {
+              "name": "Paylink order failed callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/paylink/webhook", "host": ["{{mock_base_url}}"], "path": ["paylink", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"event\": \"paylink.order.failed\",\n  \"payload\": {\n    \"orderId\": \"OMOxx\",\n    \"merchantId\": \"merchantId\",\n    \"merchantOrderId\": \"merchantOrderId\",\n    \"state\": \"FAILED\",\n    \"amount\": 10000,\n    \"expireAt\": 1291391291,\n    \"metaInfo\": {\n      \"udf1\": \"\",\n      \"udf2\": \"\",\n      \"udf3\": \"\",\n      \"udf4\": \"\"\n    },\n    \"paymentFlow\": {\n      \"type\": \"PAYLINK\",\n      \"paylinkUrl\": \"https://phon.pe/some-key\"\n    },\n    \"paymentDetails\": [\n      {\n        \"paymentMode\": \"UPI_COLLECT\",\n        \"timestamp\": 12121212,\n        \"amount\": 10000,\n        \"transactionId\": \"OM12333\",\n        \"state\": \"FAILED\",\n        \"errorCode\": \"AUTHORIZATION_ERROR\",\n        \"detailedErrorCode\": \"ZM\",\n        \"splitInstruments\": [\n          {\n            \"amount\": 10000,\n            \"rail\": {\n              \"type\": \"UPI\",\n              \"upiTransactionId\": \"upi12313\",\n              \"vpa\": \"12****78@ybl\"\n            },\n            \"instrument\": {\n              \"type\": \"ACCOUNT\",\n              \"accountType\": \"SAVINGS\",\n              \"accountNumber\": \"******1234\"\n            }\n          }\n        ]\n      }\n    ]\n  }\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

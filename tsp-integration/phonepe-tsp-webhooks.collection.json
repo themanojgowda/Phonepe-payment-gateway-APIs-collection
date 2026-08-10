@@ -1,0 +1,301 @@
+{
+  "info": {
+    "_postman_id": "9c3a8c2f-6cde-4e95-93b6-0d8cc4a7e101",
+    "name": "PhonePe TSP - Auth & Webhooks v2",
+    "description": "Postman collection for PhonePe TSP Authorization and Webhook APIs from docs.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const env = pm.environment.get('tsp_env') || 'sandbox';",
+          "const isProd = env === 'production';",
+          "const authUrl = isProd",
+          "  ? 'https://api.phonepe.com/apis/identity-manager/v1/oauth/token'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token';",
+          "const apiBase = isProd",
+          "  ? 'https://api.phonepe.com/apis/pg'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox';",
+          "pm.environment.set('auth_url', authUrl);",
+          "pm.environment.set('api_base_url', apiBase);",
+          "",
+          "const location = pm.execution.location || [];",
+          "const isAuthorizationRequest = location.includes('Authorization');",
+          "if (isAuthorizationRequest) {",
+          "  return;",
+          "}",
+          "",
+          "const token = pm.environment.get('access_token') || '';",
+          "if (!token) {",
+          "  throw new Error('Missing access_token. Run Auth/Get Access Token first.');",
+          "}",
+          "pm.request.headers.upsert({ key: 'Authorization', value: `O-Bearer ${token}` });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Authorization",
+      "item": [
+        {
+          "name": "Generate UAT Credentials",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "https://merchant-simulator.drove.uat.phonepe.nb3/v1/generate?merchantId={{merchantId_upper}}",
+              "protocol": "https",
+              "host": ["merchant-simulator", "drove", "uat", "phonepe", "nb3"],
+              "path": ["v1", "generate"],
+              "query": [
+                { "key": "merchantId", "value": "{{merchantId_upper}}" }
+              ]
+            },
+            "description": "Generate UAT credentials and store them into environment variables."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (pm.response.code !== 200) {",
+                  "  throw new Error('Expected 200 response');",
+                  "}",
+                  "if (!data.clientId || !data.clientSecret || !data.clientVersion) {",
+                  "  throw new Error('Missing required fields: clientId/clientSecret/clientVersion');",
+                  "}",
+                  "const clientId = String(data.clientId).trim();",
+                  "const clientSecret = String(data.clientSecret).trim();",
+                  "const clientVersion = String(data.clientVersion).trim();",
+                  "const merchantId = clientId.split('_')[0] || '';",
+                  "const merchantIdUpper = merchantId.toUpperCase();",
+                  "pm.environment.set('client_id', clientId);",
+                  "pm.environment.set('client_secret', clientSecret);",
+                  "pm.environment.set('client_version', clientVersion);",
+                  "pm.environment.set('merchant_id', merchantId);",
+                  "pm.environment.set('merchantId_upper', merchantIdUpper);",
+                  "const message =",
+                  "  'Hello Team,\\n\\n' +",
+                  "  'Kindly use the following Test credentials for UAT/Sandbox:\\n\\n' +",
+                  "  'Merchant Id = \"' + merchantId + '\"\\n' +",
+                  "  'Client Id = \"' + clientId + '\"\\n' +",
+                  "  'Client Secret = \"' + clientSecret + '\"\\n' +",
+                  "  'Client Version = \"' + clientVersion + '\"';",
+                  "pm.environment.set('credentialsMessage', message);",
+                  "console.log('Saved client_id, client_version, merchant_id, merchantId_upper');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Access Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "client_id", "value": "{{client_id}}", "type": "text" },
+                { "key": "client_version", "value": "{{client_version}}", "type": "text" },
+                { "key": "client_secret", "value": "{{client_secret}}", "type": "text" },
+                { "key": "grant_type", "value": "client_credentials", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{auth_url}}",
+              "host": ["{{auth_url}}"]
+            },
+            "description": "Generate access token for TSP APIs."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Auth success', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "pm.environment.set('access_token', data.access_token || '');",
+                  "pm.environment.set('token_type', data.token_type || 'O-Bearer');",
+                  "pm.environment.set('token_expires_at', String(data.expires_at || 0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "Fetch Webhook Events",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/configs/v1/webhooks/events",
+              "host": ["{{api_base_url}}"],
+              "path": ["configs", "v1", "webhooks", "events"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Fetch webhook events success', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "const events = Array.isArray(data.events) ? data.events : [];",
+                  "pm.environment.set('available_webhook_events', JSON.stringify(events));",
+                  "if (!pm.environment.get('webhook_events_custom')) {",
+                  "  pm.environment.set('webhook_events', JSON.stringify(events));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"{{webhook_url}}\",\n  \"username\": \"{{webhook_username}}\",\n  \"password\": \"{{webhook_password}}\",\n  \"events\": {{webhook_events}},\n  \"description\": \"{{webhook_description}}\"\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/configs/v1/webhooks",
+              "host": ["{{api_base_url}}"],
+              "path": ["configs", "v1", "webhooks"]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const custom = (pm.environment.get('webhook_events_custom') || '').trim();",
+                  "if (custom) {",
+                  "  try {",
+                  "    const parsed = JSON.parse(custom);",
+                  "    if (!Array.isArray(parsed)) {",
+                  "      throw new Error('webhook_events_custom must be a JSON array string');",
+                  "    }",
+                  "    pm.environment.set('webhook_events', JSON.stringify(parsed));",
+                  "  } catch (e) {",
+                  "    throw new Error('Invalid webhook_events_custom. Provide a JSON array string.');",
+                  "  }",
+                  "} else {",
+                  "  const available = pm.environment.get('available_webhook_events') || '';",
+                  "  if (available) {",
+                  "    pm.environment.set('webhook_events', available);",
+                  "  }",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Create webhook success', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.id) pm.environment.set('webhook_id', data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Webhook",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"{{webhook_url}}\",\n  \"description\": \"{{webhook_description}}\",\n  \"username\": \"{{webhook_username}}\",\n  \"password\": \"{{webhook_password}}\",\n  \"events\": {{webhook_events}},\n  \"enabled\": {{webhook_enabled}}\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/configs/v1/webhooks/{{webhook_id}}",
+              "host": ["{{api_base_url}}"],
+              "path": ["configs", "v1", "webhooks", "{{webhook_id}}"]
+            }
+          }
+        },
+        {
+          "name": "List Webhooks",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/configs/v1/webhooks?limit={{limit}}&offset={{offset}}",
+              "host": ["{{api_base_url}}"],
+              "path": ["configs", "v1", "webhooks"],
+              "query": [
+                { "key": "limit", "value": "{{limit}}" },
+                { "key": "offset", "value": "{{offset}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Webhook",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/configs/v1/webhooks/{{webhook_id}}",
+              "host": ["{{api_base_url}}"],
+              "path": ["configs", "v1", "webhooks", "{{webhook_id}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Delete webhook success', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

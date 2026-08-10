@@ -1,0 +1,15 @@
+### Fetch Webhook Events
+GET {{api_base_url}}/configs/v1/webhooks/events
+Content-Type: application/json
+Authorization: O-Bearer {{access_token}}
+
+### Postman test script reference
+# pm.test('Fetch webhook events success', function () {
+#   pm.expect(pm.response.code).to.be.oneOf([200, 201]);
+# });
+# const data = pm.response.json();
+# const events = Array.isArray(data.events) ? data.events : [];
+# pm.environment.set('available_webhook_events', JSON.stringify(events));
+# if (!pm.environment.get('webhook_events_custom')) {
+#   pm.environment.set('webhook_events', JSON.stringify(events));
+# }

@@ -1,0 +1,284 @@
+{
+  "info": {
+    "_postman_id": "d9e5f23c-8b6a-4f1c-9d3e-4c0a7b2f3e58",
+    "name": "PhonePe PG Chargeback (Disputes)",
+    "description": "PhonePe Payment Gateway - Chargeback / Dispute Management APIs.\n\nIntroduction: A chargeback is a dispute raised by a customer against a transaction (undelivered goods, poor experience, suspected fraud, etc.). These APIs let you track and respond to disputes: fetch a single dispute, list disputes over a date range, accept a dispute, contest it, and manage supporting evidence.\n\nFolders:\n- Authorization -> Get Access Token\n- Disputes -> Fetch Dispute, Fetch List of Disputes, Accept Dispute, Contest Dispute\n- Evidence -> Upload Evidence, Delete Evidence\n- Webhooks (Mock Server) -> dispute lifecycle callbacks\n\nCredentials: set client_id, client_version, client_secret and tsp_env in the environment; the access token is fetched/refreshed automatically. Set dispute_id (and evidence_id) to target a specific dispute.\n\nEnvironments:\n- Sandbox: https://api-preprod.phonepe.com/apis/pg-sandbox/<Endpoint>\n- Production: Authorization API https://api.phonepe.com/apis/identity-manager/<Endpoint> ; Other APIs https://api.phonepe.com/apis/pg/<Endpoint>\n\nAPI Endpoints:\n- Authorization          POST   /v1/oauth/token\n- Fetch Dispute          GET    /v1/disputes/{disputeId}\n- Fetch List of Disputes GET    /v1/disputes?from&to&offset&limit&status\n- Accept Dispute         POST   /v1/disputes/{disputeId}/accept\n- Contest Dispute        POST   /v1/disputes/{disputeId}/contest\n- Upload Evidence        POST   /v1/disputes/{disputeId}/evidences\n- Delete Evidence        DELETE /v1/disputes/{disputeId}/evidences/{evidenceId}\n\nNote: For Partner integrations, add an X-MERCHANT-ID header with the end merchant's MerchantID on every call.\n\nDocs:\n- Introduction: https://developer.phonepe.com/chargeback/\n- Authorization: https://developer.phonepe.com/chargeback/authorization\n- Fetch Dispute: https://developer.phonepe.com/chargeback/fetch-dispute\n- Fetch List of Disputes: https://developer.phonepe.com/chargeback/fetch-list-of-disputes\n- Accept Dispute: https://developer.phonepe.com/chargeback/accept-dispute\n- Contest Dispute: https://developer.phonepe.com/chargeback/contest-dispute\n- Upload Evidence: https://developer.phonepe.com/chargeback/upload-evidence\n- Delete Evidence: https://developer.phonepe.com/chargeback/delete-evidence\n- Webhook: https://developer.phonepe.com/chargeback/webhook-handling",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const env = pm.environment.get('tsp_env') || 'sandbox';",
+          "const isProd = env === 'production';",
+          "const authUrl = isProd",
+          "  ? 'https://api.phonepe.com/apis/identity-manager/v1/oauth/token'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token';",
+          "const apiBase = isProd",
+          "  ? 'https://api.phonepe.com/apis/pg'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox';",
+          "pm.environment.set('auth_url', authUrl);",
+          "pm.environment.set('api_base_url', apiBase);",
+          "",
+          "const location = pm.execution.location || [];",
+          "const isAuthorizationRequest = location.includes('Authorization');",
+          "const isWebhook = location.includes('Webhooks (Mock Server)');",
+          "if (isAuthorizationRequest || isWebhook) {",
+          "  return;",
+          "}",
+          "",
+          "const token = pm.environment.get('access_token') || '';",
+          "if (!token) {",
+          "  throw new Error('Missing access_token. Run Authorization/Get Access Token first.');",
+          "}",
+          "pm.request.headers.upsert({ key: 'Authorization', value: `O-Bearer ${token}` });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Authorization",
+      "item": [
+        {
+          "name": "Get Access Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "client_id", "value": "{{client_id}}", "type": "text" },
+                { "key": "client_version", "value": "{{client_version}}", "type": "text" },
+                { "key": "client_secret", "value": "{{client_secret}}", "type": "text" },
+                { "key": "grant_type", "value": "client_credentials", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{auth_url}}",
+              "host": ["{{auth_url}}"]
+            },
+            "description": "Generate the O-Bearer access token required to authenticate all Chargeback API requests. https://developer.phonepe.com/chargeback/authorization"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Auth success', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "pm.environment.set('access_token', data.access_token || '');",
+                  "pm.environment.set('token_type', data.token_type || 'O-Bearer');",
+                  "pm.environment.set('token_expires_at', String(data.expires_at || 0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Disputes",
+      "item": [
+        {
+          "name": "Fetch Dispute",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/v1/disputes/{{dispute_id}}",
+              "host": ["{{api_base_url}}"],
+              "path": ["v1", "disputes", "{{dispute_id}}"]
+            },
+            "description": "Retrieve the details of a single dispute by disputeId. https://developer.phonepe.com/chargeback/fetch-dispute"
+          }
+        },
+        {
+          "name": "Fetch List of Disputes",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/v1/disputes?from={{settlement_from}}&to={{settlement_to}}&offset=0&limit=10&status={{dispute_status}}",
+              "host": ["{{api_base_url}}"],
+              "path": ["v1", "disputes"],
+              "query": [
+                { "key": "from", "value": "{{settlement_from}}" },
+                { "key": "to", "value": "{{settlement_to}}" },
+                { "key": "offset", "value": "0" },
+                { "key": "limit", "value": "10" },
+                { "key": "status", "value": "{{dispute_status}}" }
+              ]
+            },
+            "description": "List disputes over a date range. from/to are epoch-millisecond timestamps (both REQUIRED; auto-defaulted by the pre-request script to the last 30 days, and from must be < to). offset/limit paginate (limit max 100). status is REQUIRED - one of ACTION_REQUIRED, UNDER_REVIEW, WON, LOST. Response has disputes[], nextOffset, totalCount. https://developer.phonepe.com/chargeback/fetch-list-of-disputes"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Auto-fill a last-30-days window if not already set (edit these variables to change the range)",
+                  "const now = Date.now();",
+                  "if (!pm.environment.get('settlement_to')) { pm.environment.set('settlement_to', String(now)); }",
+                  "if (!pm.environment.get('settlement_from')) { pm.environment.set('settlement_from', String(now - 30 * 24 * 60 * 60 * 1000)); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Accept Dispute",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/v1/disputes/{{dispute_id}}/accept",
+              "host": ["{{api_base_url}}"],
+              "path": ["v1", "disputes", "{{dispute_id}}", "accept"]
+            },
+            "description": "Accept the chargeback raised by the customer (no request body - only the disputeId path param). A dispute can be accepted only when its status is ACTION_REQUIRED, otherwise a 409 INVALID_TRANSITION is returned. Response returns the dispute object with status UNDER_REVIEW. https://developer.phonepe.com/chargeback/accept-dispute"
+          }
+        },
+        {
+          "name": "Contest Dispute",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"{{contest_type}}\", // FULL_CONTEST (ignores contestAmount, uses full dispute amount) or PARTIAL_CONTEST\n  \"contestAmount\": {{contest_amount}} // enter the amount to contest here in paise (> 0 and <= dispute amount; ignored for FULL_CONTEST)\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/v1/disputes/{{dispute_id}}/contest",
+              "host": ["{{api_base_url}}"],
+              "path": ["v1", "disputes", "{{dispute_id}}", "contest"]
+            },
+            "description": "Contest (challenge) the chargeback if you believe it is invalid. Upload supporting evidence first via Upload Evidence. Body: type (FULL_CONTEST | PARTIAL_CONTEST) and contestAmount (paise, > 0 and <= dispute amount). Can only be contested when status is ACTION_REQUIRED. Response returns the dispute object with status UNDER_REVIEW. https://developer.phonepe.com/chargeback/contest-dispute"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Evidence",
+      "item": [
+        {
+          "name": "Upload Evidence",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": [], "description": "Select the supporting document to upload here (max 2 MB, non-empty; allowed types: bmp, jpeg, jpg, pdf, csv, doc, png)" },
+                { "key": "type", "value": "{{evidence_type}}", "type": "text", "description": "Evidence type: explanationLetter | customerRecallLetter | serviceConfirmation | refundConfirmation | serviceCancellation | deliveryProof | shippingProof | accessActivityLog" },
+                { "key": "label", "value": "{{evidence_label}}", "type": "text", "description": "Display name of the file (required, max 256 chars)" }
+              ]
+            },
+            "url": {
+              "raw": "{{api_base_url}}/v1/disputes/{{dispute_id}}/evidences",
+              "host": ["{{api_base_url}}"],
+              "path": ["v1", "disputes", "{{dispute_id}}", "evidences"]
+            },
+            "description": "Submit supporting documents to strengthen your case when contesting a dispute. multipart/form-data fields: file (max 2 MB, allowed bmp/jpeg/jpg/pdf/csv/doc/png), type (evidence type enum), label (file name, max 256). Evidence can be uploaded only when the dispute is ACTION_REQUIRED. Response returns evidenceId + label. https://developer.phonepe.com/chargeback/upload-evidence"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Evidence uploaded', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.evidenceId) { pm.environment.set('evidence_id', data.evidenceId); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Evidence",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/v1/disputes/{{dispute_id}}/evidences/{{evidence_id}}",
+              "host": ["{{api_base_url}}"],
+              "path": ["v1", "disputes", "{{dispute_id}}", "evidences", "{{evidence_id}}"]
+            },
+            "description": "Delete a previously uploaded evidence file by disputeId + evidenceId. Only allowed while the dispute is ACTION_REQUIRED. Response: { success: true }. https://developer.phonepe.com/chargeback/delete-evidence"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks (Mock Server)",
+      "description": "Sample PhonePe dispute callbacks. Configure the real webhook (URL + username/password + events) in the PhonePe Business Dashboard -> Developer Settings -> Webhook. PhonePe signs each callback with an Authorization header = SHA256(username:password). Right-click this folder -> Mock Collection to create a Postman mock server, then set mock_base_url to the generated URL and webhook_auth_sha256 to your SHA256(username:password). Dispute events: payment.dispute.created, payment.dispute.action_required, payment.dispute.under_review, payment.dispute.won, payment.dispute.lost. https://developer.phonepe.com/chargeback/webhook-handling",
+      "item": [
+        {
+          "name": "Dispute Created (sample)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"payment.dispute.created\",\n  \"payload\": {\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"disputeId\": \"{{dispute_id}}\",\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"orderId\": \"{{order_id}}\",\n    \"transactionId\": \"{{transaction_id}}\",\n    \"transactionCompletedAt\": 1750000000000,\n    \"transactionAmount\": 1000,\n    \"disputeAmount\": 1000,\n    \"refundAmount\": 0,\n    \"contestAmount\": 0,\n    \"status\": \"UNDER_REVIEW\",\n    \"stage\": \"CHARGEBACK\",\n    \"dueDate\": 1755000000000,\n    \"createdAt\": 1750000000000,\n    \"updatedAt\": 1750000000000\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/chargeback/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["chargeback", "webhook"]
+            },
+            "description": "Sample dispute lifecycle callback. When payment.dispute.created is sent the status is UNDER_REVIEW; if the dispute is valid a follow-up payment.dispute.action_required (status ACTION_REQUIRED) is sent."
+          },
+          "response": [
+            {
+              "name": "Dispute Created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+                ],
+                "body": { "mode": "raw", "raw": "{\n  \"event\": \"payment.dispute.created\"\n}" },
+                "url": {
+                  "raw": "{{mock_base_url}}/chargeback/webhook",
+                  "host": ["{{mock_base_url}}"],
+                  "path": ["chargeback", "webhook"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "cookie": [],
+              "body": "{\n  \"event\": \"payment.dispute.under_review\",\n  \"payload\": {\n    \"merchantId\": \"MId\",\n    \"disputeId\": \"D1234\",\n    \"merchantOrderId\": \"MO2329\",\n    \"orderId\": \"OMO241\",\n    \"transactionId\": \"OM4564\",\n    \"transactionCompletedAt\": 1750000000000,\n    \"transactionAmount\": 1000,\n    \"disputeAmount\": 1000,\n    \"refundAmount\": 1000,\n    \"contestAmount\": 0,\n    \"status\": \"LOST\",\n    \"stage\": \"CHARGEBACK\",\n    \"dueDate\": 1755000000000,\n    \"createdAt\": 1750000000000,\n    \"updatedAt\": 1750000000000,\n    \"evidences\": {\n      \"explanationLetter\": [ { \"evidenceId\": \"D1\", \"label\": \"dummmy\" } ]\n    }\n  }\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

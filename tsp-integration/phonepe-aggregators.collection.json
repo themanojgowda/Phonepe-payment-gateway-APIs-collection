@@ -1,0 +1,124 @@
+{
+  "info": {
+    "_postman_id": "e7fc29a3-5f6b-4c1e-b05d-bf7b4c9e0a25",
+    "name": "PhonePe API for Aggregators",
+    "description": "PhonePe API for Aggregators - Sub-merchant onboarding.\n\nIntroduction: Aggregators onboard and manage their sub-merchants on PhonePe. Unlike the PG V2 APIs (which use an O-Bearer token), these legacy aggregator APIs authenticate with the X-VERIFY checksum header and a Base64-encoded request payload.\n\nAuthentication (X-VERIFY):\n  X-VERIFY = SHA256(base64Payload + apiEndpointPath + saltKey) + \"###\" + saltIndex\n  - For POST: base64Payload is the Base64 of the JSON body; the request body sent is { \"request\": base64Payload }.\n  - For GET: there is no body, so X-VERIFY = SHA256(apiEndpointPath + saltKey) + \"###\" + saltIndex.\nThe pre-request scripts in each request compute the Base64 payload and X-VERIFY for you using Postman's built-in CryptoJS.\n\nFolders:\n- Sub-merchant -> Create Sub-merchant, Read Sub-merchant\n\nRequired environment variables:\n- aggregator_base_url  (host, e.g. https://api-preprod.phonepe.com/apis/pg-sandbox) -- CONFIRM the exact aggregator host with your PhonePe POC\n- aggregator_salt_key, aggregator_salt_index\n- merchant_id (aggregator merchant id), aggregator_sub_merchant_id\n- submerchant_full_name, submerchant_display_name, submerchant_mcc\n- sub_merchant_id (returned by Create; used by Read)\n\nAPI Endpoints:\n- Create Sub-merchant  POST /v1/submerchant\n- Read Sub-merchant    GET  /v1/submerchant/{merchantId}/{subMerchantId}\n\nDocs: https://developer.phonepe.com/api-for-aggregators",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Sub-merchant",
+      "item": [
+        {
+          "name": "Create Sub-merchant",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-VERIFY", "value": "{{x_verify}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request\": \"{{base64_payload}}\"\n}"
+            },
+            "url": {
+              "raw": "{{aggregator_base_url}}/v1/submerchant",
+              "host": ["{{aggregator_base_url}}"],
+              "path": ["v1", "submerchant"]
+            },
+            "description": "Onboard a new sub-merchant under the aggregator. The pre-request script builds the JSON payload (from the environment variables), Base64-encodes it into base64_payload, and computes the X-VERIFY header. Response data contains merchantId, subMerchantId and aggregatorSubMerchantId. https://developer.phonepe.com/api-for-aggregators"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Build the sub-merchant onboarding payload from environment variables.",
+                  "const payload = {",
+                  "  merchantId: pm.environment.get('merchant_id'),",
+                  "  fullName: pm.environment.get('submerchant_full_name') || 'Sub Merchant Pvt Ltd',",
+                  "  displayName: pm.environment.get('submerchant_display_name') || 'Sub Merchant',",
+                  "  mcc: pm.environment.get('submerchant_mcc') || '5411', // 4-digit Merchant Category Code",
+                  "  websiteUrl: pm.environment.get('submerchant_website_url') || 'https://www.example.com',",
+                  "  externalMerchantType: 'ONLINE', // OFFLINE or ONLINE",
+                  "  externalOnboardingType: 'AGGREGATORS',",
+                  "  phoneNumber: pm.environment.get('customer_phone') || '9999999999',",
+                  "  email: pm.environment.get('customer_email') || 'submerchant@example.com',",
+                  "  address: {",
+                  "    building: '1',",
+                  "    street: 'MG Road',",
+                  "    area: 'Central',",
+                  "    locality: 'Bangalore',",
+                  "    city: 'Bangalore',",
+                  "    state: 'Karnataka',",
+                  "    country: 'India',",
+                  "    pinCode: '560001',",
+                  "    landmark: 'Near Metro'",
+                  "  },",
+                  "  aggregatorSubMerchantId: pm.environment.get('aggregator_sub_merchant_id')",
+                  "};",
+                  "",
+                  "const endpoint = '/v1/submerchant';",
+                  "const saltKey = pm.environment.get('aggregator_salt_key') || '';",
+                  "const saltIndex = pm.environment.get('aggregator_salt_index') || '1';",
+                  "",
+                  "const base64Payload = CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(JSON.stringify(payload)));",
+                  "const xVerify = CryptoJS.SHA256(base64Payload + endpoint + saltKey).toString() + '###' + saltIndex;",
+                  "",
+                  "pm.environment.set('base64_payload', base64Payload);",
+                  "pm.environment.set('x_verify', xVerify);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Sub-merchant created', function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+                  "const data = pm.response.json();",
+                  "if (data && data.data && data.data.subMerchantId) { pm.environment.set('sub_merchant_id', data.data.subMerchantId); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read Sub-merchant",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-VERIFY", "value": "{{x_verify}}" }
+            ],
+            "url": {
+              "raw": "{{aggregator_base_url}}/v1/submerchant/{{merchant_id}}/{{sub_merchant_id}}",
+              "host": ["{{aggregator_base_url}}"],
+              "path": ["v1", "submerchant", "{{merchant_id}}", "{{sub_merchant_id}}"]
+            },
+            "description": "Fetch a sub-merchant's onboarding details. The pre-request script computes the X-VERIFY header for the GET path (no body). https://developer.phonepe.com/api-for-aggregators"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const merchantId = pm.environment.get('merchant_id');",
+                  "const subMerchantId = pm.environment.get('sub_merchant_id');",
+                  "const endpoint = '/v1/submerchant/' + merchantId + '/' + subMerchantId;",
+                  "const saltKey = pm.environment.get('aggregator_salt_key') || '';",
+                  "const saltIndex = pm.environment.get('aggregator_salt_index') || '1';",
+                  "",
+                  "const xVerify = CryptoJS.SHA256(endpoint + saltKey).toString() + '###' + saltIndex;",
+                  "pm.environment.set('x_verify', xVerify);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

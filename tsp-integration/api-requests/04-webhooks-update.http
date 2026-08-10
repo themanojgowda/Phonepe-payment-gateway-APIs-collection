@@ -1,0 +1,13 @@
+### Update Webhook
+PUT {{api_base_url}}/configs/v1/webhooks/{{webhook_id}}
+Content-Type: application/json
+Authorization: O-Bearer {{access_token}}
+
+{
+  "url": "{{webhook_url}}",
+  "description": "{{webhook_description}}",
+  "username": "{{webhook_username}}",
+  "password": "{{webhook_password}}",
+  "events": {{webhook_events}},
+  "enabled": {{webhook_enabled}}
+}

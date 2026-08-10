@@ -1,0 +1,14 @@
+### Get Access Token
+POST {{auth_url}}
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client_id}}&client_version={{client_version}}&client_secret={{client_secret}}&grant_type=client_credentials
+
+### Postman test script reference
+# pm.test('Auth success', function () {
+#   pm.expect(pm.response.code).to.be.oneOf([200, 201]);
+# });
+# const data = pm.response.json();
+# pm.environment.set('access_token', data.access_token || '');
+# pm.environment.set('token_type', data.token_type || 'O-Bearer');
+# pm.environment.set('token_expires_at', String(data.expires_at || 0));

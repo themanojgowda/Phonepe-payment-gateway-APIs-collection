@@ -1,0 +1,590 @@
+{
+  "info": {
+    "_postman_id": "c9e2a4f1-5d7b-4c3a-8e11-2f6a9b0d4c72",
+    "name": "PhonePe Standard Checkout Autopay v2",
+    "description": "PhonePe Autopay (Standard Checkout) v2 APIs. Source docs: https://developer.phonepe.com/payment-gateway/autopay/standard-checkout/introduction .\n\nFolders:\n- Authorization -> Get Access Token\n- Subscription Setup -> Setup Subscription (API/SDK), Subscription Order Status, Subscription Status\n- Redemption Flow -> Notify Redemption, Execute Redemption, Redemption Order Status\n- Other APIs -> Cancel Subscription\n- Refund -> Initiate Refund, Check Refund Status\n- Webhooks (Mock Server) -> Setup/Redemption/Pause/Unpause/Revoke callbacks\n\nCredentials: set client_id, client_version, client_secret and tsp_env in the environment. All order/subscription/refund IDs are auto-generated on every run by scripts; access token is fetched/refreshed automatically.\n\nNote: Subscription Pause/Unpause and Revoke are user-initiated from the PSP app and are delivered to you only as webhook callbacks (no merchant API). See the Webhooks (Mock Server) folder. The SDK setup flow uses the same Setup Subscription API to create the order token consumed by the mobile SDK.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const env = pm.environment.get('tsp_env') || 'sandbox';",
+          "const isProd = env === 'production';",
+          "const authUrl = isProd",
+          "  ? 'https://api.phonepe.com/apis/identity-manager/v1/oauth/token'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token';",
+          "const apiBase = isProd",
+          "  ? 'https://api.phonepe.com/apis/pg'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox';",
+          "pm.environment.set('auth_url', authUrl);",
+          "pm.environment.set('api_base_url', apiBase);",
+          "",
+          "const location = pm.execution.location || [];",
+          "const isAuthorizationRequest = location.includes('Authorization');",
+          "const isWebhook = location.includes('Webhooks (Mock Server)');",
+          "if (isAuthorizationRequest || isWebhook) {",
+          "  return;",
+          "}",
+          "",
+          "const token = pm.environment.get('access_token') || '';",
+          "if (!token) {",
+          "  throw new Error('Missing access_token. Run Authorization/Get Access Token first.');",
+          "}",
+          "pm.request.headers.upsert({ key: 'Authorization', value: `O-Bearer ${token}` });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Authorization",
+      "item": [
+        {
+          "name": "Get Access Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "client_id", "value": "{{client_id}}", "type": "text" },
+                { "key": "client_version", "value": "{{client_version}}", "type": "text" },
+                { "key": "client_secret", "value": "{{client_secret}}", "type": "text" },
+                { "key": "grant_type", "value": "client_credentials", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{auth_url}}",
+              "host": ["{{auth_url}}"]
+            },
+            "description": "Generate O-Bearer access token for Autopay APIs. https://developer.phonepe.com/payment-gateway/autopay/standard-checkout/authorization"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Auth success', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "pm.environment.set('access_token', data.access_token || '');",
+                  "pm.environment.set('token_type', data.token_type || 'O-Bearer');",
+                  "pm.environment.set('token_expires_at', String(data.expires_at || 0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Subscription Setup",
+      "item": [
+        {
+          "name": "Setup Subscription",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{merchant_order_id}}\",\n  \"amount\": {{setup_amount}},\n  \"paymentFlow\": {\n    \"type\": \"SUBSCRIPTION_CHECKOUT_SETUP\",\n    \"merchantUrls\": {\n      \"redirectUrl\": \"{{redirect_url}}\"\n    },\n    \"subscriptionDetails\": {\n      \"subscriptionType\": \"RECURRING\",\n      \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\",\n      \"authWorkflowType\": \"{{auth_workflow_type}}\",\n      \"amountType\": \"FIXED\",\n      \"maxAmount\": {{max_amount}},\n      \"frequency\": \"{{frequency}}\",\n      \"productType\": \"UPI_MANDATE\",\n      \"expireAt\": {{subscription_expire_at}}\n    }\n  },\n  \"expireAfter\": 3000,\n  \"metaInfo\": {\n    \"udf1\": \"udf1\",\n    \"udf2\": \"udf2\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/pay",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "pay"]
+            },
+            "description": "Create a user subscription and set up its mandate. Same API is used for both API and SDK integration (the returned token/redirectUrl invokes the payment app or SDK). authWorkflowType TRANSACTION (amount >= 100 or first debit) or PENNY_DROP (amount 200). https://developer.phonepe.com/payment-gateway/autopay/standard-checkout/setup-subscription/api-integration"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const stamp = Date.now();",
+                  "pm.environment.set('merchant_order_id', 'MO' + stamp);",
+                  "pm.environment.set('merchant_subscription_id', 'MS' + stamp);",
+                  "pm.environment.set('subscription_expire_at', String(stamp + 365 * 24 * 60 * 60 * 1000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Setup created', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.orderId) pm.environment.set('order_id', data.orderId);",
+                  "if (data && data.redirectUrl) pm.environment.set('setup_redirect_url', data.redirectUrl);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check Subscription Order Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/order/{{merchant_order_id}}/status",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "order", "{{merchant_order_id}}", "status"]
+            },
+            "description": "Check the status of the setup order (PENDING/COMPLETED/FAILED). Add ?details=true to see all attempts. https://developer.phonepe.com/payment-gateway/autopay/standard-checkout/order-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Setup order status ok', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.paymentFlow && data.paymentFlow.subscriptionId) pm.environment.set('subscription_id', data.paymentFlow.subscriptionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check Subscription Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/subscriptions/{{merchant_subscription_id}}/status",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "subscriptions", "{{merchant_subscription_id}}", "status"]
+            },
+            "description": "Check current state of a subscription (ACTIVE/CANCELLED/REVOKED/PAUSED). https://developer.phonepe.com/payment-gateway/autopay/standard-checkout/subscription-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Subscription status ok', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.subscriptionId) pm.environment.set('subscription_id', data.subscriptionId);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Redemption Flow",
+      "item": [
+        {
+          "name": "Notify Redemption",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{redeem_merchant_order_id}}\",\n  \"amount\": {{redeem_amount}},\n  \"paymentFlow\": {\n    \"type\": \"SUBSCRIPTION_CHECKOUT_REDEMPTION\",\n    \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\",\n    \"redemptionRetryStrategy\": \"STANDARD\",\n    \"autoDebit\": false\n  }\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/subscriptions/notify",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "subscriptions", "notify"]
+            },
+            "description": "Notify the user of an upcoming debit. Verify subscription is ACTIVE first. autoDebit=false requires a separate Execute Redemption call; autoDebit=true is processed automatically by PhonePe. https://developer.phonepe.com/payment-gateway/autopay/standard-checkout/redemption-notify"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('redeem_merchant_order_id', 'MO' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Notify accepted', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.orderId) pm.environment.set('redeem_order_id', data.orderId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Execute Redemption",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{redeem_merchant_order_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/subscriptions/redeem",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "subscriptions", "redeem"]
+            },
+            "description": "Debit the redemption amount from the user. Pass the same merchantOrderId used in Notify. Required only when autoDebit=false. https://developer.phonepe.com/payment-gateway/autopay/standard-checkout/redemption-execute"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Redeem accepted', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.transactionId) pm.environment.set('transaction_id', data.transactionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Redemption Order Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/order/{{redeem_merchant_order_id}}/status",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "order", "{{redeem_merchant_order_id}}", "status"]
+            },
+            "description": "Check final state of a redemption (COMPLETED/FAILED/PENDING). Uses the merchantOrderId from the Notify call. https://developer.phonepe.com/payment-gateway/autopay/standard-checkout/redemption-order-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Redemption order status ok', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Other APIs",
+      "item": [
+        {
+          "name": "Cancel Subscription",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/subscriptions/{{merchant_subscription_id}}/cancel",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "subscriptions", "{{merchant_subscription_id}}", "cancel"]
+            },
+            "description": "Deactivate an active subscription. Returns 204 No Content on success; confirm via Check Subscription Status. https://developer.phonepe.com/payment-gateway/autopay/standard-checkout/subscription-cancel"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cancel accepted', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 202, 204]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Refund",
+      "item": [
+        {
+          "name": "Initiate Refund",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantRefundId\": \"{{merchant_refund_id}}\",\n  \"originalMerchantOrderId\": \"{{redeem_merchant_order_id}}\",\n  \"amount\": {{refund_amount}}\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/payments/v2/refund",
+              "host": ["{{api_base_url}}"],
+              "path": ["payments", "v2", "refund"]
+            },
+            "description": "Refund a redemption transaction. amount is in paise and cannot exceed the original amount. https://developer.phonepe.com/payment-gateway/autopay/standard-checkout/refund"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('merchant_refund_id', 'RF' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Refund accepted', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.refundId) pm.environment.set('refund_id', data.refundId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check Refund Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/payments/v2/refund/{{merchant_refund_id}}/status",
+              "host": ["{{api_base_url}}"],
+              "path": ["payments", "v2", "refund", "{{merchant_refund_id}}", "status"]
+            },
+            "description": "Track the status of a refund (PENDING/COMPLETED/FAILED). https://developer.phonepe.com/payment-gateway/autopay/standard-checkout/refund/#nav-check-refund-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Refund status ok', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Webhooks (Mock Server)",
+      "description": "Create a Postman Mock Server from this folder. The saved examples below simulate PhonePe Autopay callbacks. Validate the incoming Authorization header: SHA256(username:password) using the username/password you configured on the dashboard. Subscription Pause/Unpause and Revoke are user-initiated from the PSP app and reach you only via these callbacks. https://developer.phonepe.com/payment-gateway/autopay/webhook",
+      "item": [
+        {
+          "name": "Setup Order Completed",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"SUBSCRIPTION_SETUP_ORDER_COMPLETED\",\n  \"event\": \"subscription.setup.order.completed\",\n  \"payload\": {\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"state\": \"COMPLETED\",\n    \"amount\": 100\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/autopay/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["autopay", "webhook"]
+            }
+          },
+          "response": [
+            {
+              "name": "Setup completed callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/autopay/webhook", "host": ["{{mock_base_url}}"], "path": ["autopay", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"type\": \"SUBSCRIPTION_SETUP_ORDER_COMPLETED\",\n  \"event\": \"subscription.setup.order.completed\",\n  \"payload\": {\n    \"merchantId\": \"TX12345\",\n    \"merchantOrderId\": \"Tx123\",\n    \"orderId\": \"OMO2604141037458946131769V\",\n    \"state\": \"COMPLETED\",\n    \"currency\": \"INR\",\n    \"amount\": 100,\n    \"expireAt\": 1776146265882,\n    \"paymentFlow\": {\n      \"type\": \"SUBSCRIPTION_CHECKOUT_SETUP\",\n      \"merchantSubscriptionId\": \"Sub123\",\n      \"authWorkflowType\": \"TRANSACTION\",\n      \"amountType\": \"FIXED\",\n      \"maxAmount\": 100,\n      \"frequency\": \"ON_DEMAND\",\n      \"subscriptionId\": \"OMS2604141037458806131949V\"\n    }\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Redemption Order Completed",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"SUBSCRIPTION_REDEMPTION_ORDER_COMPLETED\",\n  \"event\": \"subscription.redemption.order.completed\",\n  \"payload\": {\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{redeem_merchant_order_id}}\",\n    \"state\": \"COMPLETED\",\n    \"amount\": 100\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/autopay/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["autopay", "webhook"]
+            }
+          },
+          "response": [
+            {
+              "name": "Redemption completed callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/autopay/webhook", "host": ["{{mock_base_url}}"], "path": ["autopay", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"type\": \"SUBSCRIPTION_REDEMPTION_ORDER_COMPLETED\",\n  \"event\": \"subscription.redemption.order.completed\",\n  \"payload\": {\n    \"merchantId\": \"Merchant1\",\n    \"merchantOrderId\": \"Tx1234\",\n    \"orderId\": \"OMO2602271707486703053678W\",\n    \"state\": \"COMPLETED\",\n    \"currency\": \"INR\",\n    \"amount\": 100,\n    \"paymentFlow\": {\n      \"type\": \"SUBSCRIPTION_REDEMPTION\",\n      \"merchantSubscriptionId\": \"Sub123\",\n      \"redemptionRetryStrategy\": \"STANDARD\",\n      \"autoDebit\": false\n    },\n    \"paymentDetails\": [\n      {\n        \"transactionId\": \"OM2603021020514773080857W\",\n        \"paymentMode\": \"UPI_AUTO_PAY\",\n        \"amount\": 100,\n        \"state\": \"COMPLETED\",\n        \"rail\": { \"type\": \"UPI\", \"utr\": \"606132842672\", \"umn\": \"d3aee1762f19469799bcc03e534c1e08@axl\" }\n      }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Subscription Paused",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"SUBSCRIPTION_PAUSED\",\n  \"event\": \"subscription.paused\",\n  \"payload\": {\n    \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\",\n    \"state\": \"PAUSED\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/autopay/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["autopay", "webhook"]
+            }
+          },
+          "response": [
+            {
+              "name": "Subscription paused callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/autopay/webhook", "host": ["{{mock_base_url}}"], "path": ["autopay", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"type\": \"SUBSCRIPTION_PAUSED\",\n  \"event\": \"subscription.paused\",\n  \"payload\": {\n    \"merchantSubscriptionId\": \"MS1708797962855\",\n    \"subscriptionId\": \"OMS2402242336054995042603\",\n    \"state\": \"PAUSED\",\n    \"authWorkflowType\": \"TRANSACTION\",\n    \"amountType\": \"FIXED\",\n    \"maxAmount\": 200,\n    \"frequency\": \"ON_DEMAND\",\n    \"expireAt\": 1737278524000,\n    \"pauseStartDate\": 1708798426196,\n    \"pauseEndDate\": 1708885799000\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Subscription Unpaused",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"SUBSCRIPTION_UNPAUSED\",\n  \"event\": \"subscription.unpaused\",\n  \"payload\": {\n    \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\",\n    \"state\": \"ACTIVE\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/autopay/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["autopay", "webhook"]
+            }
+          },
+          "response": [
+            {
+              "name": "Subscription unpaused callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/autopay/webhook", "host": ["{{mock_base_url}}"], "path": ["autopay", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"type\": \"SUBSCRIPTION_UNPAUSED\",\n  \"event\": \"subscription.unpaused\",\n  \"payload\": {\n    \"merchantSubscriptionId\": \"MS1708797962855\",\n    \"subscriptionId\": \"OMS2402242336054995042603\",\n    \"state\": \"ACTIVE\",\n    \"authWorkflowType\": \"TRANSACTION\",\n    \"amountType\": \"FIXED\",\n    \"maxAmount\": 200,\n    \"frequency\": \"ON_DEMAND\",\n    \"expireAt\": 1737278524000,\n    \"pauseStartDate\": null,\n    \"pauseEndDate\": null\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Subscription Revoked",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"SUBSCRIPTION_REVOKED\",\n  \"event\": \"subscription.revoked\",\n  \"payload\": {\n    \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\",\n    \"state\": \"REVOKED\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/autopay/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["autopay", "webhook"]
+            }
+          },
+          "response": [
+            {
+              "name": "Subscription revoked callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/autopay/webhook", "host": ["{{mock_base_url}}"], "path": ["autopay", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"type\": \"SUBSCRIPTION_REVOKED\",\n  \"event\": \"subscription.revoked\",\n  \"payload\": {\n    \"merchantSubscriptionId\": \"MS1708797962855\",\n    \"subscriptionId\": \"OMS2402242336054995042603\",\n    \"state\": \"REVOKED\",\n    \"authWorkflowType\": \"TRANSACTION\",\n    \"amountType\": \"FIXED\",\n    \"maxAmount\": 200,\n    \"frequency\": \"ON_DEMAND\",\n    \"expireAt\": 1737278524000,\n    \"pauseStartDate\": null,\n    \"pauseEndDate\": null\n  }\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

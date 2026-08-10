@@ -1,0 +1,38 @@
+### Create Webhook
+POST {{api_base_url}}/configs/v1/webhooks
+Content-Type: application/json
+Authorization: O-Bearer {{access_token}}
+
+{
+  "url": "{{webhook_url}}",
+  "username": "{{webhook_username}}",
+  "password": "{{webhook_password}}",
+  "events": {{webhook_events}},
+  "description": "{{webhook_description}}"
+}
+
+### Postman pre-request script reference
+# const custom = (pm.environment.get('webhook_events_custom') || '').trim();
+# if (custom) {
+#   try {
+#     const parsed = JSON.parse(custom);
+#     if (!Array.isArray(parsed)) {
+#       throw new Error('webhook_events_custom must be a JSON array string');
+#     }
+#     pm.environment.set('webhook_events', JSON.stringify(parsed));
+#   } catch (e) {
+#     throw new Error('Invalid webhook_events_custom. Provide a JSON array string.');
+#   }
+# } else {
+#   const available = pm.environment.get('available_webhook_events') || '';
+#   if (available) {
+#     pm.environment.set('webhook_events', available);
+#   }
+# }
+
+### Postman test script reference
+# pm.test('Create webhook success', function () {
+#   pm.expect(pm.response.code).to.be.oneOf([200, 201]);
+# });
+# const data = pm.response.json();
+# if (data && data.id) pm.environment.set('webhook_id', data.id);

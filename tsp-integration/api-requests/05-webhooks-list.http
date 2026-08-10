@@ -1,0 +1,4 @@
+### List Webhooks
+GET {{api_base_url}}/configs/v1/webhooks?limit={{limit}}&offset={{offset}}
+Content-Type: application/json
+Authorization: O-Bearer {{access_token}}

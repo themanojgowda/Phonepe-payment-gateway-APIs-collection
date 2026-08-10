@@ -1,0 +1,415 @@
+{
+  "info": {
+    "_postman_id": "b7d4f1a2-3e6c-4a1b-9f22-7e51c0a8d301",
+    "name": "PhonePe eMandate (eNACH) v2",
+    "description": "PhonePe eNACH eMandate APIs (Authorization, Subscription Setup, Payment Operations, Webhooks). Source docs: https://developer.phonepe.com/payment-gateway/enach/introduction .\n\nUAT Sandbox: https://developer.phonepe.com/payment-gateway/enach/uat-sandbox\nConfigure Test Case Templates in the PhonePe UAT Test App (Flow: Subscription V2). Templates: Setup -> \"Setup success via Enach\" / \"Setup failure via Enach\"; Redemption -> \"Enach redemption Success\" / \"Enach Redemption Pending\".\n\nCredentials: set client_id, client_version, client_secret and tsp_env in the environment. All order/subscription IDs are auto-generated on every run by scripts; access token is fetched/refreshed automatically.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const env = pm.environment.get('tsp_env') || 'sandbox';",
+          "const isProd = env === 'production';",
+          "const authUrl = isProd",
+          "  ? 'https://api.phonepe.com/apis/identity-manager/v1/oauth/token'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token';",
+          "const apiBase = isProd",
+          "  ? 'https://api.phonepe.com/apis/pg'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox';",
+          "pm.environment.set('auth_url', authUrl);",
+          "pm.environment.set('api_base_url', apiBase);",
+          "",
+          "const location = pm.execution.location || [];",
+          "const isAuthorizationRequest = location.includes('Authorization');",
+          "if (isAuthorizationRequest) {",
+          "  return;",
+          "}",
+          "",
+          "const token = pm.environment.get('access_token') || '';",
+          "if (!token) {",
+          "  throw new Error('Missing access_token. Run Authorization/Get Access Token first.');",
+          "}",
+          "pm.request.headers.upsert({ key: 'Authorization', value: `O-Bearer ${token}` });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Authorization",
+      "item": [
+        {
+          "name": "Get Access Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "client_id", "value": "{{client_id}}", "type": "text" },
+                { "key": "client_version", "value": "{{client_version}}", "type": "text" },
+                { "key": "client_secret", "value": "{{client_secret}}", "type": "text" },
+                { "key": "grant_type", "value": "client_credentials", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{auth_url}}",
+              "host": ["{{auth_url}}"]
+            },
+            "description": "Generate O-Bearer access token for eNACH APIs. https://developer.phonepe.com/payment-gateway/enach/authorization"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Auth success', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "pm.environment.set('access_token', data.access_token || '');",
+                  "pm.environment.set('token_type', data.token_type || 'O-Bearer');",
+                  "pm.environment.set('token_expires_at', String(data.expires_at || 0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Subscription Setup",
+      "item": [
+        {
+          "name": "Setup Subscription",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{merchant_order_id}}\",\n  \"amount\": {{setup_amount}},\n  \"paymentFlow\": {\n    \"type\": \"SUBSCRIPTION_SETUP\",\n    \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\",\n    \"authWorkflowType\": \"ZERO\",\n    \"amountType\": \"FIXED\",\n    \"maxAmount\": {{max_amount}},\n    \"frequency\": \"{{frequency}}\",\n    \"expireAt\": {{mandate_expire_at}},\n    \"paymentMode\": {\n      \"type\": \"ENACH_ACCOUNT\",\n      \"authInstrumentType\": \"NET_BANKING\"\n    },\n    \"merchantUrls\": {\n      \"redirectUrl\": \"{{redirect_url}}\",\n      \"cancelRedirectUrl\": \"{{cancel_redirect_url}}\"\n    }\n  },\n  \"constraints\": [\n    {\n      \"type\": \"ENACH_ACCOUNT\",\n      \"accountNumber\": \"{{account_number}}\",\n      \"ifsc\": \"{{ifsc}}\",\n      \"accountType\": \"{{account_type}}\",\n      \"bankCustomerName\": \"{{bank_customer_name}}\"\n    }\n  ],\n  \"metaInfo\": {\n    \"udf1\": \"udf1\",\n    \"udf2\": \"udf2\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/subscriptions/v2/setup",
+              "host": ["{{api_base_url}}"],
+              "path": ["subscriptions", "v2", "setup"]
+            },
+            "description": "Create an eNACH mandate. https://developer.phonepe.com/payment-gateway/enach/subscription-setup/setup"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const stamp = Date.now();",
+                  "pm.environment.set('merchant_order_id', 'MO' + stamp);",
+                  "pm.environment.set('merchant_subscription_id', 'MS' + stamp);",
+                  "pm.environment.set('mandate_expire_at', String(stamp + 365 * 24 * 60 * 60 * 1000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Setup created', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.orderId) pm.environment.set('order_id', data.orderId);",
+                  "if (data && data.redirectUrl) pm.environment.set('setup_redirect_url', data.redirectUrl);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check Subscription Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/subscriptions/v2/{{merchant_subscription_id}}/status",
+              "host": ["{{api_base_url}}"],
+              "path": ["subscriptions", "v2", "{{merchant_subscription_id}}", "status"]
+            },
+            "description": "Check current state of a subscription (ACTIVE/CANCELLED/REVOKED). https://developer.phonepe.com/payment-gateway/enach/subscription-setup/status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Subscription status ok', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.subscriptionId) pm.environment.set('subscription_id', data.subscriptionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check Setup Order Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/subscriptions/v2/order/{{merchant_order_id}}/status",
+              "host": ["{{api_base_url}}"],
+              "path": ["subscriptions", "v2", "order", "{{merchant_order_id}}", "status"]
+            },
+            "description": "Check final state of the setup order. https://developer.phonepe.com/payment-gateway/enach/subscription-setup/order-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Setup order status ok', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Payment Operations",
+      "item": [
+        {
+          "name": "Redeem (Execute Redemption)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{redeem_merchant_order_id}}\",\n  \"amount\": {{redeem_amount}},\n  \"currency\": \"INR\",\n  \"paymentFlow\": {\n    \"type\": \"SUBSCRIPTION_REDEMPTION\",\n    \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\",\n    \"targetDate\": \"{{target_date}}\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/subscriptions/v2/redeem",
+              "host": ["{{api_base_url}}"],
+              "path": ["subscriptions", "v2", "redeem"]
+            },
+            "description": "Debit the mandate. targetDate must be between tomorrow and 3 days ahead. https://developer.phonepe.com/payment-gateway/enach/payment-operations/redeem"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('redeem_merchant_order_id', 'MO' + Date.now());",
+                  "const d = new Date(Date.now() + 24 * 60 * 60 * 1000);",
+                  "const target = d.toISOString().slice(0, 10);",
+                  "pm.environment.set('target_date', target);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Redeem accepted', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.transactionId) pm.environment.set('transaction_id', data.transactionId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Redeem Cancel",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{redeem_merchant_order_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/subscriptions/v2/redeem/cancel",
+              "host": ["{{api_base_url}}"],
+              "path": ["subscriptions", "v2", "redeem", "cancel"]
+            },
+            "description": "Cancel a pending debit. https://developer.phonepe.com/payment-gateway/enach/payment-operations/redeem-cancel"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Redeem cancel ok', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data && data.orderId) pm.environment.set('order_id', data.orderId);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Redeem Order Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/subscriptions/v2/order/{{redeem_merchant_order_id}}/status",
+              "host": ["{{api_base_url}}"],
+              "path": ["subscriptions", "v2", "order", "{{redeem_merchant_order_id}}", "status"]
+            },
+            "description": "Check final state of a redemption debit. https://developer.phonepe.com/payment-gateway/enach/payment-operations/redeem-order-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Redeem order status ok', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Webhooks (Mock Server)",
+      "description": "Create a Postman Mock Server from this folder. The saved examples below simulate the PhonePe eNACH callbacks. Validate the incoming Authorization header: SHA256(username:password). https://developer.phonepe.com/payment-gateway/enach/webhook-handling",
+      "item": [
+        {
+          "name": "Setup Order Completed",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"SUBSCRIPTION_SETUP_ORDER_COMPLETED\",\n  \"event\": \"subscription.setup.order.completed\",\n  \"payload\": {\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"orderId\": \"OMO260323104741\",\n    \"state\": \"PENDING\",\n    \"amount\": 200\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/enach/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["enach", "webhook"]
+            }
+          },
+          "response": [
+            {
+              "name": "Setup completed callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/enach/webhook", "host": ["{{mock_base_url}}"], "path": ["enach", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"type\": \"SUBSCRIPTION_SETUP_ORDER_COMPLETED\",\n  \"event\": \"subscription.setup.order.completed\",\n  \"payload\": {\n    \"merchantId\": \"TX12345\",\n    \"merchantOrderId\": \"MO1774243061089\",\n    \"orderId\": \"OMO2603231047412984235557BW\",\n    \"state\": \"PENDING\",\n    \"currency\": \"INR\",\n    \"amount\": 200,\n    \"expireAt\": 1774243961270,\n    \"paymentFlow\": {\n      \"type\": \"SUBSCRIPTION_SETUP\",\n      \"merchantSubscriptionId\": \"MS1774243061089\",\n      \"authWorkflowType\": \"ZERO\",\n      \"amountType\": \"FIXED\",\n      \"maxAmount\": 20000000,\n      \"frequency\": \"MONTHLY\",\n      \"subscriptionId\": \"OMS2603231047412704235838BW\",\n      \"productType\": \"ENACH_MANDATE\",\n      \"authInstrumentType\": \"NET_BANKING\"\n    },\n    \"paymentDetails\": []\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Redemption Order Completed",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"SUBSCRIPTION_REDEMPTION_ORDER_COMPLETED\",\n  \"event\": \"subscription.redemption.order.completed\",\n  \"payload\": {\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{redeem_merchant_order_id}}\",\n    \"state\": \"COMPLETED\",\n    \"amount\": 200\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/enach/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["enach", "webhook"]
+            }
+          },
+          "response": [
+            {
+              "name": "Redemption completed callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/enach/webhook", "host": ["{{mock_base_url}}"], "path": ["enach", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"type\": \"SUBSCRIPTION_REDEMPTION_ORDER_COMPLETED\",\n  \"event\": \"subscription.redemption.order.completed\",\n  \"payload\": {\n    \"merchantId\": \"TX12345\",\n    \"merchantOrderId\": \"MO1722319560997\",\n    \"orderId\": \"OMO2601282154473535900531\",\n    \"state\": \"COMPLETED\",\n    \"currency\": \"INR\",\n    \"amount\": 200,\n    \"paymentFlow\": {\n      \"type\": \"SUBSCRIPTION_REDEMPTION\",\n      \"merchantSubscriptionId\": \"MS1769569283073\",\n      \"autoDebit\": false\n    },\n    \"paymentDetails\": [\n      {\n        \"transactionId\": \"OM2601282154486455900694\",\n        \"paymentMode\": \"ENACH_ACCOUNT\",\n        \"amount\": 200,\n        \"state\": \"COMPLETED\",\n        \"rail\": { \"type\": \"NACH\", \"utr\": \"ddf5d315-93cd-4019-9137-7bb2ad2ec702\" }\n      }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Redemption Order Cancelled",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"SUBSCRIPTION_REDEMPTION_ORDER_CANCELLED\",\n  \"event\": \"subscription.redemption.order.cancelled\",\n  \"payload\": {\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{redeem_merchant_order_id}}\",\n    \"state\": \"FAILED\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/enach/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["enach", "webhook"]
+            }
+          },
+          "response": [
+            {
+              "name": "Redemption cancelled callback",
+              "originalRequest": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{mock_base_url}}/enach/webhook", "host": ["{{mock_base_url}}"], "path": ["enach", "webhook"] }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"type\": \"SUBSCRIPTION_REDEMPTION_ORDER_CANCELLED\",\n  \"event\": \"subscription.redemption.order.cancelled\",\n  \"payload\": {\n    \"merchantId\": \"TX12345\",\n    \"merchantOrderId\": \"MO1774751396248\",\n    \"orderId\": \"OMO2603290759596486953861BW\",\n    \"state\": \"FAILED\",\n    \"currency\": \"INR\",\n    \"amount\": 20000000,\n    \"paymentFlow\": {\n      \"type\": \"SUBSCRIPTION_REDEMPTION\",\n      \"merchantSubscriptionId\": \"MS1773646960613\",\n      \"autoDebit\": false\n    },\n    \"paymentDetails\": [\n      {\n        \"transactionId\": \"OM2603290800005236953538BW\",\n        \"paymentMode\": \"ENACH_ACCOUNT\",\n        \"amount\": 20000000,\n        \"state\": \"FAILED\",\n        \"errorCode\": \"TXN_CANCELLED\",\n        \"detailedErrorCode\": \"REQUEST_CANCEL_BY_REQUESTER\"\n      }\n    ]\n  }\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

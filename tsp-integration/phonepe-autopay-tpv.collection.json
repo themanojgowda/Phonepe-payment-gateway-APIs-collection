@@ -1,0 +1,261 @@
+{
+  "info": {
+    "_postman_id": "c5ea0781-3d4f-4a9c-9e3b-9d5f2a7c8e03",
+    "name": "PhonePe PG V2 Autopay with TPV",
+    "description": "PhonePe Payment Gateway V2 - Autopay Subscription Setup with TPV (Third-Party Validation).\n\nIntroduction: Sets up a UPI Autopay mandate restricted to pre-registered customer bank account(s) via a constraints[] array (BFSI use cases). Same subscription setup flow as standard Autopay, with account constraints added. Two setup modes: UPI Intent (returns intentUrl) and UPI Collect (pushes a mandate request to the customer VPA).\n\nFolders:\n- Authorization -> Get Access Token\n- Subscription Setup -> Setup (UPI Intent), Setup (UPI Collect)\n- Status -> Subscription Order Status, Subscription Status\n- Webhooks (Mock Server)\n\nCredentials: set client_id, client_version, client_secret and tsp_env in the environment; the access token is fetched/refreshed automatically. Set account_number + ifsc to the allowed bank account.\n\nEnvironments:\n- Sandbox: https://api-preprod.phonepe.com/apis/pg-sandbox/<Endpoint>\n- Production: Authorization API https://api.phonepe.com/apis/identity-manager/<Endpoint> ; Other APIs https://api.phonepe.com/apis/pg/<Endpoint>\n\nAPI Endpoints:\n- Authorization              POST /v1/oauth/token\n- Subscription Setup (TPV)   POST /subscriptions/v2/setup\n- Subscription Order Status  GET  /subscriptions/v2/order/{merchantOrderId}/status\n- Subscription Status        GET  /subscriptions/v2/{merchantSubscriptionId}/status\n\nDocs: https://developer.phonepe.com/payment-gateway/autopay/api-integration/api-reference/subscription-setuptvp",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const env = pm.environment.get('tsp_env') || 'sandbox';",
+          "const isProd = env === 'production';",
+          "const authUrl = isProd",
+          "  ? 'https://api.phonepe.com/apis/identity-manager/v1/oauth/token'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token';",
+          "const apiBase = isProd",
+          "  ? 'https://api.phonepe.com/apis/pg'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox';",
+          "pm.environment.set('auth_url', authUrl);",
+          "pm.environment.set('api_base_url', apiBase);",
+          "",
+          "const location = pm.execution.location || [];",
+          "if (location.includes('Authorization') || location.includes('Webhooks (Mock Server)')) {",
+          "  return;",
+          "}",
+          "",
+          "const token = pm.environment.get('access_token') || '';",
+          "if (!token) {",
+          "  throw new Error('Missing access_token. Run Authorization/Get Access Token first.');",
+          "}",
+          "pm.request.headers.upsert({ key: 'Authorization', value: `O-Bearer ${token}` });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Authorization",
+      "item": [
+        {
+          "name": "Get Access Token",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/x-www-form-urlencoded" } ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "client_id", "value": "{{client_id}}", "type": "text" },
+                { "key": "client_version", "value": "{{client_version}}", "type": "text" },
+                { "key": "client_secret", "value": "{{client_secret}}", "type": "text" },
+                { "key": "grant_type", "value": "client_credentials", "type": "text" }
+              ]
+            },
+            "url": { "raw": "{{auth_url}}", "host": ["{{auth_url}}"] },
+            "description": "Generate the O-Bearer access token required to authenticate all Autopay TPV requests."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Auth success', function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+                  "const data = pm.response.json();",
+                  "pm.environment.set('access_token', data.access_token || '');",
+                  "pm.environment.set('token_type', data.token_type || 'O-Bearer');",
+                  "pm.environment.set('token_expires_at', String(data.expires_at || 0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Subscription Setup",
+      "item": [
+        {
+          "name": "Setup (UPI Intent)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{merchant_order_id}}\", // auto-generated each run (ORDER_<timestamp>)\n  \"amount\": {{setup_amount}}, // MAX debit/redemption amount in paise (PENNY_DROP must be 200; TRANSACTION >= 100)\n  \"expireAt\": {{subscription_expire_at}}, // order expiry in epoch ms (auto-defaulted to now+10min)\n  \"paymentFlow\": {\n    \"type\": \"SUBSCRIPTION_SETUP\",\n    \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\", // auto-generated each run (SUB_<timestamp>)\n    \"authWorkflowType\": \"{{auth_workflow_type}}\", // PENNY_DROP or TRANSACTION\n    \"amountType\": \"FIXED\", // FIXED or VARIABLE\n    \"maxAmount\": {{max_amount}}, // max amount up to which redemptions are allowed (paise)\n    \"frequency\": \"{{frequency}}\", // DAILY / WEEKLY / MONTHLY / YEARLY / FORTNIGHTLY / BIMONTHLY / QUARTERLY / HALFYEARLY / ON_DEMAND\n    \"paymentMode\": {\n      \"type\": \"UPI_INTENT\",\n      \"targetApp\": \"{{target_app}}\" // Android: UPI app package name; iOS: PHONEPE / GPAY / PAYTM\n    }\n  },\n  \"constraints\": [\n    {\n      \"type\": \"ACCOUNT\",\n      \"accountNumber\": \"{{account_number}}\", // enter the allowed bank account number here (TPV restriction)\n      \"ifsc\": \"{{ifsc}}\" // enter the allowed bank IFSC here\n    }\n  ],\n  \"deviceContext\": {\n    \"deviceOS\": \"{{device_os}}\" // ANDROID or iOS\n  }\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/subscriptions/v2/setup",
+              "host": ["{{api_base_url}}"],
+              "path": ["subscriptions", "v2", "setup"]
+            },
+            "description": "Set up a UPI Autopay mandate (TPV) via UPI Intent. Returns orderId + intentUrl to open the chosen UPI app. https://developer.phonepe.com/payment-gateway/autopay/api-integration/api-reference/subscription-setuptvp"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('merchant_order_id', 'ORDER_' + Date.now());",
+                  "pm.environment.set('merchant_subscription_id', 'SUB_' + Date.now());",
+                  "if (!pm.environment.get('subscription_expire_at')) { pm.environment.set('subscription_expire_at', String(Date.now() + 10 * 60 * 1000)); }",
+                  "if (!pm.environment.get('setup_amount')) { pm.environment.set('setup_amount', '200'); }",
+                  "if (!pm.environment.get('max_amount')) { pm.environment.set('max_amount', '20000000'); }",
+                  "if (!pm.environment.get('auth_workflow_type')) { pm.environment.set('auth_workflow_type', 'TRANSACTION'); }",
+                  "if (!pm.environment.get('frequency')) { pm.environment.set('frequency', 'MONTHLY'); }",
+                  "if (!pm.environment.get('target_app')) { pm.environment.set('target_app', 'com.phonepe.app'); }",
+                  "if (!pm.environment.get('device_os')) { pm.environment.set('device_os', 'ANDROID'); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Setup created', function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+                  "const data = pm.response.json();",
+                  "if (data && data.orderId) { pm.environment.set('order_id', data.orderId); }",
+                  "if (data && data.intentUrl) { pm.environment.set('intent_url', data.intentUrl); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Setup (UPI Collect)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{merchant_order_id}}\", // auto-generated each run (ORDER_<timestamp>)\n  \"amount\": {{setup_amount}}, // MAX debit/redemption amount in paise (PENNY_DROP must be 200; TRANSACTION >= 100)\n  \"expireAt\": {{subscription_expire_at}}, // order expiry in epoch ms (auto-defaulted to now+10min)\n  \"paymentFlow\": {\n    \"type\": \"SUBSCRIPTION_SETUP\",\n    \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\", // auto-generated each run (SUB_<timestamp>)\n    \"authWorkflowType\": \"{{auth_workflow_type}}\", // PENNY_DROP or TRANSACTION\n    \"amountType\": \"VARIABLE\", // FIXED or VARIABLE\n    \"maxAmount\": {{max_amount}}, // max amount up to which redemptions are allowed (paise)\n    \"frequency\": \"{{frequency}}\", // DAILY / WEEKLY / MONTHLY / YEARLY / FORTNIGHTLY / BIMONTHLY / QUARTERLY / HALFYEARLY / ON_DEMAND\n    \"paymentMode\": {\n      \"type\": \"UPI_COLLECT\",\n      \"details\": {\n        \"type\": \"VPA\",\n        \"vpa\": \"{{customer_vpa}}\" // enter the customer UPI VPA here (mandate request is pushed to this VPA)\n      }\n    }\n  },\n  \"constraints\": [\n    {\n      \"type\": \"ACCOUNT\",\n      \"accountNumber\": \"{{account_number}}\", // enter the allowed bank account number here (TPV restriction)\n      \"ifsc\": \"{{ifsc}}\" // enter the allowed bank IFSC here\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/subscriptions/v2/setup",
+              "host": ["{{api_base_url}}"],
+              "path": ["subscriptions", "v2", "setup"]
+            },
+            "description": "Set up a UPI Autopay mandate (TPV) via UPI Collect. Returns orderId + state PENDING; the customer approves the mandate request in their UPI app. https://developer.phonepe.com/payment-gateway/autopay/api-integration/api-reference/subscription-setuptvp"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('merchant_order_id', 'ORDER_' + Date.now());",
+                  "pm.environment.set('merchant_subscription_id', 'SUB_' + Date.now());",
+                  "if (!pm.environment.get('subscription_expire_at')) { pm.environment.set('subscription_expire_at', String(Date.now() + 10 * 60 * 1000)); }",
+                  "if (!pm.environment.get('setup_amount')) { pm.environment.set('setup_amount', '200'); }",
+                  "if (!pm.environment.get('max_amount')) { pm.environment.set('max_amount', '20000000'); }",
+                  "if (!pm.environment.get('auth_workflow_type')) { pm.environment.set('auth_workflow_type', 'TRANSACTION'); }",
+                  "if (!pm.environment.get('frequency')) { pm.environment.set('frequency', 'MONTHLY'); }",
+                  "if (!pm.environment.get('customer_vpa')) { pm.environment.set('customer_vpa', 'success@ybl'); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Setup created', function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+                  "const data = pm.response.json();",
+                  "if (data && data.orderId) { pm.environment.set('order_id', data.orderId); }"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Status",
+      "item": [
+        {
+          "name": "Subscription Order Status",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": {
+              "raw": "{{api_base_url}}/subscriptions/v2/order/{{merchant_order_id}}/status?details=true",
+              "host": ["{{api_base_url}}"],
+              "path": ["subscriptions", "v2", "order", "{{merchant_order_id}}", "status"],
+              "query": [ { "key": "details", "value": "true" } ]
+            },
+            "description": "Fetch the setup order status by merchantOrderId. Poll until the mandate setup completes."
+          }
+        },
+        {
+          "name": "Subscription Status",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": {
+              "raw": "{{api_base_url}}/subscriptions/v2/{{merchant_subscription_id}}/status?details=true",
+              "host": ["{{api_base_url}}"],
+              "path": ["subscriptions", "v2", "{{merchant_subscription_id}}", "status"],
+              "query": [ { "key": "details", "value": "true" } ]
+            },
+            "description": "Fetch the mandate/subscription status by merchantSubscriptionId (ACTIVE once the mandate is set up)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks (Mock Server)",
+      "description": "Sample PhonePe subscription callbacks. Right-click this folder -> Mock Collection to create a Postman mock server, then set mock_base_url and webhook_auth_sha256.",
+      "item": [
+        {
+          "name": "Subscription Setup Completed (sample)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"subscription.setup.order.completed\",\n  \"payload\": {\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\",\n    \"orderId\": \"{{order_id}}\",\n    \"state\": \"COMPLETED\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/autopay-tpv/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["autopay-tpv", "webhook"]
+            },
+            "description": "Sample subscription setup completed callback."
+          },
+          "response": [
+            {
+              "name": "Subscription Setup Completed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+                ],
+                "body": { "mode": "raw", "raw": "{\n  \"event\": \"subscription.setup.order.completed\"\n}" },
+                "url": {
+                  "raw": "{{mock_base_url}}/autopay-tpv/webhook",
+                  "host": ["{{mock_base_url}}"],
+                  "path": ["autopay-tpv", "webhook"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "cookie": [],
+              "body": "{\n  \"event\": \"subscription.setup.order.completed\",\n  \"payload\": {\n    \"merchantOrderId\": \"merchantOrderId\",\n    \"merchantSubscriptionId\": \"merchantSubscriptionId\",\n    \"orderId\": \"OMO123\",\n    \"state\": \"COMPLETED\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

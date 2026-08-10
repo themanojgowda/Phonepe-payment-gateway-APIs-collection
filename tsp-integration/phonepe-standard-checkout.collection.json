@@ -1,0 +1,490 @@
+{
+  "info": {
+    "_postman_id": "b3f8d21a-6c4e-4d9a-9f1b-2a7c5e8d0f31",
+    "name": "PhonePe PG V2 Standard Checkout",
+    "description": "PhonePe Payment Gateway - PG V2 Standard Checkout (Website / API) integration.\n\nIntroduction: Standard Checkout is the fastest way to accept payments. You create an order (Create Payment) and PhonePe returns a hosted PayPage redirectUrl where the customer completes payment using UPI, Cards, or NetBanking - PhonePe renders the entire checkout UI. You redirect the customer to that URL (or invoke it in an iframe), then confirm the outcome via Order Status and/or webhooks, and refund a completed payment with the Refund APIs.\n\nFolders:\n- Authorization -> Get Access Token\n- Payment -> Create Payment (PG_CHECKOUT)\n- Status -> Check Order Status\n- Refund -> Initiate Refund, Check Refund Status\n- Webhooks (Mock Server) -> checkout.order.completed / checkout.order.failed / pg.refund.completed / pg.refund.failed callbacks\n\nCredentials: set client_id, client_version, client_secret and tsp_env in the environment. merchantOrderId is auto-generated on every Create run by scripts, and orderId/redirectUrl are captured from responses; the access token is fetched/refreshed automatically.\n\nEnvironments:\n- Sandbox: https://api-preprod.phonepe.com/apis/pg-sandbox/<Endpoint>\n- Production: Authorization API https://api.phonepe.com/apis/identity-manager/<Endpoint> ; Other APIs https://api.phonepe.com/apis/pg/<Endpoint>\n\nAPI Endpoints:\n- Authorization       POST /v1/oauth/token\n- Create Payment      POST /checkout/v2/pay\n- Check Order Status  GET  /checkout/v2/order/{merchantOrderId}/status?details=true\n- Initiate Refund     POST /payments/v2/refund\n- Check Refund Status GET  /payments/v2/refund/{merchantRefundId}/status\n\nOrder states: PENDING -> COMPLETED or FAILED. Rely only on the root-level state for the payment outcome.\n\nNote: For Partner integrations, add an X-MERCHANT-ID header with the end merchant's MerchantID on every call.\n\nDocs:\n- Introduction: https://developer.phonepe.com/phonepe-payment-gateway/pg-v2-standard-checkout-integration/\n- Authorization: https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/authorization/\n- Create Payment: https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/create-payment/initiate-payment\n- Order Status: https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/order-status\n- Refund: https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/refund\n- Webhook: https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/webhook\n- UAT Sandbox: https://developer.phonepe.com/payment-gateway/uat-testing-go-live/uat-sandbox",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const env = pm.environment.get('tsp_env') || 'sandbox';",
+          "const isProd = env === 'production';",
+          "const authUrl = isProd",
+          "  ? 'https://api.phonepe.com/apis/identity-manager/v1/oauth/token'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token';",
+          "const apiBase = isProd",
+          "  ? 'https://api.phonepe.com/apis/pg'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox';",
+          "pm.environment.set('auth_url', authUrl);",
+          "pm.environment.set('api_base_url', apiBase);",
+          "",
+          "const location = pm.execution.location || [];",
+          "const isAuthorizationRequest = location.includes('Authorization');",
+          "const isWebhook = location.includes('Webhooks (Mock Server)');",
+          "if (isAuthorizationRequest || isWebhook) {",
+          "  return;",
+          "}",
+          "",
+          "const token = pm.environment.get('access_token') || '';",
+          "if (!token) {",
+          "  throw new Error('Missing access_token. Run Authorization/Get Access Token first.');",
+          "}",
+          "pm.request.headers.upsert({ key: 'Authorization', value: `O-Bearer ${token}` });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Authorization",
+      "item": [
+        {
+          "name": "Get Access Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "client_id", "value": "{{client_id}}", "type": "text" },
+                { "key": "client_version", "value": "{{client_version}}", "type": "text" },
+                { "key": "client_secret", "value": "{{client_secret}}", "type": "text" },
+                { "key": "grant_type", "value": "client_credentials", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{auth_url}}",
+              "host": ["{{auth_url}}"]
+            },
+            "description": "Generate the O-Bearer access token required to authenticate all Standard Checkout API requests. Include the returned access_token in the Authorization header (O-Bearer <token>) for all subsequent calls, and refresh before expires_at. https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/authorization/"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Auth success', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "pm.environment.set('access_token', data.access_token || '');",
+                  "pm.environment.set('token_type', data.token_type || 'O-Bearer');",
+                  "pm.environment.set('token_expires_at', String(data.expires_at || 0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Payment",
+      "item": [
+        {
+          "name": "Create Payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{merchant_order_id}}\", // auto-generated each run by pre-request script (ORDER_<timestamp>)\n  \"amount\": {{checkout_amount}}, // enter your amount here in paisa (min 100; 10000 = Rs.100)\n  \"expireAfter\": {{expire_after}}, // enter order expiry here in seconds (300-3600)\n  \"paymentFlow\": {\n    \"type\": \"PG_CHECKOUT\",\n    \"merchantUrls\": {\n      \"redirectUrl\": \"{{redirect_url}}\" // enter your post-payment redirect URL here\n    }\n  },\n  \"disablePaymentRetry\": false, // set true to prevent the customer retrying after a failed attempt\n  \"metaInfo\": {\n    \"udf1\": \"udf1\", // optional passthrough fields udf1-udf5 (returned in status/webhook)\n    \"udf2\": \"udf2\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/pay",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "pay"]
+            },
+            "description": "Initiate a PG Checkout session. amount is in paisa (min 100). expireAfter (seconds) is optional, range 300-3600. paymentFlow.type must be PG_CHECKOUT and paymentFlow.merchantUrls.redirectUrl is where the user is redirected after a success/failed payment. The response returns orderId, state PENDING and redirectUrl (the hosted PayPage) - redirect the user there or invoke it in an iframe. https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/create-payment/initiate-payment"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Auto-generate a unique merchant order id for each run",
+                  "pm.environment.set('merchant_order_id', 'ORDER_' + Date.now());",
+                  "// Auto-fill dynamic defaults only when the variable is empty (edit the body comments to override)",
+                  "if (!pm.environment.get('checkout_amount')) { pm.environment.set('checkout_amount', '10000'); }",
+                  "if (!pm.environment.get('expire_after')) { pm.environment.set('expire_after', '1200'); }",
+                  "if (!pm.environment.get('redirect_url')) { pm.environment.set('redirect_url', 'https://www.google.com'); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Create Payment success', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "pm.environment.set('order_id', data.orderId || '');",
+                  "pm.environment.set('checkout_redirect_url', data.redirectUrl || '');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Status",
+      "item": [
+        {
+          "name": "Check Order Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/order/{{merchant_order_id}}/status?details=true&errorContext=true",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "order", "{{merchant_order_id}}", "status"],
+              "query": [
+                { "key": "details", "value": "true" },
+                { "key": "errorContext", "value": "true" }
+              ]
+            },
+            "description": "Fetch the latest status of an order. details=true returns every payment attempt under paymentDetails (false returns only the latest); errorContext=true returns the errorContext block when the state is FAILED. Root-level state is PENDING, COMPLETED or FAILED - rely on it for the payment outcome. https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/order-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status fetched', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "pm.environment.set('order_id', data.orderId || pm.environment.get('order_id'));",
+                  "if (data.paymentDetails && data.paymentDetails.length) {",
+                  "  pm.environment.set('transaction_id', data.paymentDetails[0].transactionId || '');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check Order Status with Settlement",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/order/{{merchant_order_id}}/status?details=true&settlementDetails=true",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "order", "{{merchant_order_id}}", "status"],
+              "query": [
+                { "key": "details", "value": "true" },
+                { "key": "settlementDetails", "value": "true" }
+              ]
+            },
+            "description": "Same as Check Order Status but with settlementDetails=true, which additionally returns a settlementDetails object: state (NOT_INITIATED / INITIATED / PROCESSED / ATTEMPT_FAILED), splitSettlementDetails[] and accountsSettlementDetails[] with amountBreakup (transactionAmount, settlementAmount, fee, sgst/cgst/igst, commission) and utr/settlementId. Populated once the order is COMPLETED and settled. https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/order-status-with-settlement/"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status fetched', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "if (data.settlementDetails) {",
+                  "  pm.environment.set('settlement_state', data.settlementDetails.state || '');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Refund",
+      "item": [
+        {
+          "name": "Initiate Refund",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantRefundId\": \"{{merchant_refund_id}}\", // auto-generated each run by pre-request script (REFUND_<timestamp>)\n  \"originalMerchantOrderId\": \"{{merchant_order_id}}\", // enter the original order id to refund here\n  \"amount\": {{refund_amount}} // enter refund amount here in paisa (min 100, must be <= captured amount)\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/payments/v2/refund",
+              "host": ["{{api_base_url}}"],
+              "path": ["payments", "v2", "refund"]
+            },
+            "description": "Initiate a refund against a completed order. merchantRefundId is a unique refund ID (auto-generated by the pre-request script). originalMerchantOrderId is the order to refund. amount is in paisa (min 100) and must be <= the amount originally captured. The response returns refundId and state PENDING. https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/refund"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('merchant_refund_id', 'REFUND_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Refund initiated', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201, 202]);",
+                  "});",
+                  "const data = pm.response.json();",
+                  "pm.environment.set('refund_id', data.refundId || '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Check Refund Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{api_base_url}}/payments/v2/refund/{{merchant_refund_id}}/status",
+              "host": ["{{api_base_url}}"],
+              "path": ["payments", "v2", "refund", "{{merchant_refund_id}}", "status"]
+            },
+            "description": "Fetch the status of a refund by merchantRefundId. state is PENDING, COMPLETED or FAILED; splitInstruments describes how the amount was returned. https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/refund/#nav-check-refund-status"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Refund status fetched', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Webhooks (Mock Server)",
+      "description": "Sample PhonePe S2S callbacks for Standard Checkout. Right-click this folder -> Mock Collection to create a Postman mock server, then set mock_base_url to the generated URL. PhonePe signs callbacks with Authorization: SHA256(username:password) (set webhook_auth_sha256 to mirror it). Supported events: checkout.order.completed, checkout.order.failed, pg.refund.completed, pg.refund.failed. Configure the webhook URL and events in the PhonePe Business Dashboard -> Developer Settings -> Webhooks. https://developer.phonepe.com/payment-gateway/website-integration/standard-checkout/api-integration/api-reference/webhook",
+      "item": [
+        {
+          "name": "Order Completed (checkout.order.completed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"checkout.order.completed\",\n  \"payload\": {\n    \"orderId\": \"OMO2403282020198641071317\",\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"state\": \"COMPLETED\",\n    \"amount\": 10000,\n    \"expireAt\": 1724866793837,\n    \"paymentDetails\": [\n      {\n        \"paymentMode\": \"UPI_QR\",\n        \"transactionId\": \"OM12334\",\n        \"timestamp\": 1724866793837,\n        \"amount\": 10000,\n        \"state\": \"COMPLETED\"\n      }\n    ],\n    \"metaInfo\": {\n      \"udf1\": \"\",\n      \"udf2\": \"\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/checkout/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["checkout", "webhook"]
+            },
+            "description": "Sample checkout.order.completed callback, sent when an order is successfully completed. Use the root-level payload.state to confirm the payment."
+          },
+          "response": [
+            {
+              "name": "Order Completed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"event\": \"checkout.order.completed\"\n}"
+                },
+                "url": {
+                  "raw": "{{mock_base_url}}/checkout/webhook",
+                  "host": ["{{mock_base_url}}"],
+                  "path": ["checkout", "webhook"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "cookie": [],
+              "body": "{\n  \"event\": \"checkout.order.completed\",\n  \"payload\": {\n    \"orderId\": \"OMO2403282020198641071317\",\n    \"merchantId\": \"merchantId\",\n    \"merchantOrderId\": \"merchantOrderId\",\n    \"state\": \"COMPLETED\",\n    \"amount\": 10000,\n    \"expireAt\": 1724866793837,\n    \"paymentDetails\": [\n      {\n        \"paymentMode\": \"UPI_QR\",\n        \"transactionId\": \"OM12334\",\n        \"timestamp\": 1724866793837,\n        \"amount\": 10000,\n        \"state\": \"COMPLETED\"\n      }\n    ],\n    \"metaInfo\": {\n      \"udf1\": \"\",\n      \"udf2\": \"\"\n    }\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Order Failed (checkout.order.failed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"checkout.order.failed\",\n  \"payload\": {\n    \"orderId\": \"OMO2403282020198641071311\",\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"state\": \"FAILED\",\n    \"amount\": 10000,\n    \"expireAt\": 1724866793837,\n    \"paymentDetails\": [\n      {\n        \"paymentMode\": \"UPI_COLLECT\",\n        \"timestamp\": 1724866793837,\n        \"amount\": 10000,\n        \"transactionId\": \"OM12333\",\n        \"state\": \"FAILED\",\n        \"errorCode\": \"AUTHORIZATION_ERROR\",\n        \"detailedErrorCode\": \"ZM\"\n      }\n    ],\n    \"metaInfo\": {\n      \"udf1\": \"\",\n      \"udf2\": \"\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/checkout/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["checkout", "webhook"]
+            },
+            "description": "Sample checkout.order.failed callback, sent when an order fails. paymentDetails carries errorCode/detailedErrorCode for the failed attempt."
+          },
+          "response": [
+            {
+              "name": "Order Failed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"event\": \"checkout.order.failed\"\n}"
+                },
+                "url": {
+                  "raw": "{{mock_base_url}}/checkout/webhook",
+                  "host": ["{{mock_base_url}}"],
+                  "path": ["checkout", "webhook"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "cookie": [],
+              "body": "{\n  \"event\": \"checkout.order.failed\",\n  \"payload\": {\n    \"orderId\": \"OMO2403282020198641071311\",\n    \"merchantId\": \"merchantId\",\n    \"merchantOrderId\": \"merchantOrderId\",\n    \"state\": \"FAILED\",\n    \"amount\": 10000,\n    \"expireAt\": 1724866793837,\n    \"paymentDetails\": [\n      {\n        \"paymentMode\": \"UPI_COLLECT\",\n        \"timestamp\": 1724866793837,\n        \"amount\": 10000,\n        \"transactionId\": \"OM12333\",\n        \"state\": \"FAILED\",\n        \"errorCode\": \"AUTHORIZATION_ERROR\",\n        \"detailedErrorCode\": \"ZM\"\n      }\n    ],\n    \"metaInfo\": {\n      \"udf1\": \"\",\n      \"udf2\": \"\"\n    }\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Refund Completed (pg.refund.completed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"pg.refund.completed\",\n  \"payload\": {\n    \"merchantId\": \"{{merchantId_upper}}\",\n    \"merchantRefundId\": \"{{merchant_refund_id}}\",\n    \"originalMerchantOrderId\": \"{{merchant_order_id}}\",\n    \"amount\": 100,\n    \"state\": \"COMPLETED\",\n    \"timestamp\": 1730869961754,\n    \"refundId\": \"OMR7878098045517540996\",\n    \"splitInstruments\": [\n      {\n        \"amount\": 100,\n        \"rail\": {\n          \"type\": \"UPI\",\n          \"utr\": \"586756785\",\n          \"upiTransactionId\": \"YBL5bc011fa9f8644763b52b96a29a9655\",\n          \"vpa\": \"12****78@ybl\"\n        },\n        \"instrument\": {\n          \"type\": \"ACCOUNT\",\n          \"maskedAccountNumber\": \"******1234\",\n          \"accountType\": \"SAVINGS\"\n        }\n      }\n    ]\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/checkout/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["checkout", "webhook"]
+            },
+            "description": "Sample pg.refund.completed callback, sent when a refund is successfully processed."
+          },
+          "response": [
+            {
+              "name": "Refund Completed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"event\": \"pg.refund.completed\"\n}"
+                },
+                "url": {
+                  "raw": "{{mock_base_url}}/checkout/webhook",
+                  "host": ["{{mock_base_url}}"],
+                  "path": ["checkout", "webhook"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "cookie": [],
+              "body": "{\n  \"event\": \"pg.refund.completed\",\n  \"payload\": {\n    \"merchantId\": \"merchantId\",\n    \"merchantRefundId\": \"merchantRefundId\",\n    \"originalMerchantOrderId\": \"Order123\",\n    \"amount\": 100,\n    \"state\": \"COMPLETED\",\n    \"timestamp\": 1730869961754,\n    \"refundId\": \"OMR7878098045517540996\",\n    \"splitInstruments\": [\n      {\n        \"amount\": 100,\n        \"rail\": {\n          \"type\": \"UPI\",\n          \"utr\": \"586756785\",\n          \"upiTransactionId\": \"YBL5bc011fa9f8644763b52b96a29a9655\",\n          \"vpa\": \"12****78@ybl\"\n        },\n        \"instrument\": {\n          \"type\": \"ACCOUNT\",\n          \"maskedAccountNumber\": \"******1234\",\n          \"accountType\": \"SAVINGS\"\n        }\n      }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Refund Failed (pg.refund.failed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"pg.refund.failed\",\n  \"payload\": {\n    \"originalMerchantOrderId\": \"{{merchant_order_id}}\",\n    \"refundId\": \"OMR7878098045517540996\",\n    \"amount\": 1234,\n    \"state\": \"FAILED\",\n    \"timestamp\": 1730869961754,\n    \"errorCode\": \"AUTHORIZATION_ERROR\",\n    \"detailedErrorCode\": \"ZM\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/checkout/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["checkout", "webhook"]
+            },
+            "description": "Sample pg.refund.failed callback, sent when refund processing fails. errorCode/detailedErrorCode describe the failure."
+          },
+          "response": [
+            {
+              "name": "Refund Failed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"event\": \"pg.refund.failed\"\n}"
+                },
+                "url": {
+                  "raw": "{{mock_base_url}}/checkout/webhook",
+                  "host": ["{{mock_base_url}}"],
+                  "path": ["checkout", "webhook"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "cookie": [],
+              "body": "{\n  \"event\": \"pg.refund.failed\",\n  \"payload\": {\n    \"originalMerchantOrderId\": \"\",\n    \"refundId\": \"OMR7878098045517540996\",\n    \"amount\": 1234,\n    \"state\": \"FAILED\",\n    \"timestamp\": 1730869961754,\n    \"errorCode\": \"AUTHORIZATION_ERROR\",\n    \"detailedErrorCode\": \"ZM\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

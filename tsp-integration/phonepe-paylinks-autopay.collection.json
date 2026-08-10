@@ -1,0 +1,274 @@
+{
+  "info": {
+    "_postman_id": "d6fb1892-4e5a-4b0d-af4c-ae6a3b8d9f14",
+    "name": "PhonePe PG Payment Links Via Autopay",
+    "description": "PhonePe Payment Gateway - Payment Links Via Autopay.\n\nIntroduction: Set up a UPI Autopay mandate through a shareable payment link (SMS/Email). The customer opens the link, authorises the mandate, and you later notify + execute recurring redemptions against it. Useful when you cannot integrate the checkout SDK directly.\n\nFolders:\n- Authorization -> Get Access Token\n- Subscription Setup -> Setup Subscription (Paylink)\n- Redemption -> Notify Redemption, Execute Redemption\n- Status -> Order Status\n- Webhooks (Mock Server)\n\nCredentials: set client_id, client_version, client_secret and tsp_env in the environment; the access token is fetched/refreshed automatically.\n\nEnvironments:\n- Sandbox: https://api-preprod.phonepe.com/apis/pg-sandbox/<Endpoint>\n- Production: Authorization API https://api.phonepe.com/apis/identity-manager/<Endpoint> ; Other APIs https://api.phonepe.com/apis/pg/<Endpoint>\n\nAPI Endpoints:\n- Authorization        POST /v1/oauth/token\n- Setup Subscription   POST /paylinks/v1/pay\n- Notify Redemption    POST /checkout/v2/subscriptions/notify\n- Execute Redemption   POST /checkout/v2/subscriptions/redeem\n- Order Status         GET  /checkout/v2/order/{merchantOrderId}/status\n\nDocs: https://developer.phonepe.com/payment-gateway/autopay/paylinks-autopay/api-integration/",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const env = pm.environment.get('tsp_env') || 'sandbox';",
+          "const isProd = env === 'production';",
+          "const authUrl = isProd",
+          "  ? 'https://api.phonepe.com/apis/identity-manager/v1/oauth/token'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox/v1/oauth/token';",
+          "const apiBase = isProd",
+          "  ? 'https://api.phonepe.com/apis/pg'",
+          "  : 'https://api-preprod.phonepe.com/apis/pg-sandbox';",
+          "pm.environment.set('auth_url', authUrl);",
+          "pm.environment.set('api_base_url', apiBase);",
+          "",
+          "const location = pm.execution.location || [];",
+          "if (location.includes('Authorization') || location.includes('Webhooks (Mock Server)')) {",
+          "  return;",
+          "}",
+          "",
+          "const token = pm.environment.get('access_token') || '';",
+          "if (!token) {",
+          "  throw new Error('Missing access_token. Run Authorization/Get Access Token first.');",
+          "}",
+          "pm.request.headers.upsert({ key: 'Authorization', value: `O-Bearer ${token}` });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Authorization",
+      "item": [
+        {
+          "name": "Get Access Token",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/x-www-form-urlencoded" } ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "client_id", "value": "{{client_id}}", "type": "text" },
+                { "key": "client_version", "value": "{{client_version}}", "type": "text" },
+                { "key": "client_secret", "value": "{{client_secret}}", "type": "text" },
+                { "key": "grant_type", "value": "client_credentials", "type": "text" }
+              ]
+            },
+            "url": { "raw": "{{auth_url}}", "host": ["{{auth_url}}"] },
+            "description": "Generate the O-Bearer access token required to authenticate all Paylinks-Autopay requests."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Auth success', function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+                  "const data = pm.response.json();",
+                  "pm.environment.set('access_token', data.access_token || '');",
+                  "pm.environment.set('token_type', data.token_type || 'O-Bearer');",
+                  "pm.environment.set('token_expires_at', String(data.expires_at || 0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Subscription Setup",
+      "item": [
+        {
+          "name": "Setup Subscription (Paylink)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{merchant_order_id}}\", // auto-generated each run (ORDER_<timestamp>)\n  \"description\": \"Autopay mandate setup\", // enter the description shown on the payment link here\n  \"currency\": \"INR\",\n  \"amount\": {{paylink_amount}}, // setup amount in paise (PENNY_DROP must be 200; TRANSATION >= 100)\n  \"expireAt\": {{paylink_expire_at}}, // link expiry in epoch ms (auto-defaulted to now+24h)\n  \"constraints\": [\n    {\n      \"type\": \"ACCOUNT\",\n      \"accountNumber\": \"{{account_number}}\", // optional - restrict mandate to this bank account (TPV)\n      \"ifsc\": \"{{ifsc}}\" // optional - allowed bank IFSC\n    }\n  ],\n  \"paymentFlow\": {\n    \"type\": \"SUBSCRIPTION_PAYLINK_SETUP\",\n    \"customerDetails\": {\n      \"name\": \"{{customer_name}}\", // enter the customer name here\n      \"phoneNumber\": \"{{customer_phone}}\", // enter the customer mobile number here (link sent via SMS)\n      \"email\": \"{{customer_email}}\" // enter the customer email here (link sent via EMAIL)\n    },\n    \"notificationChannels\": [\"SMS\", \"EMAIL\"], // channels used to deliver the payment link\n    \"subscriptionDetails\": {\n      \"subscriptionType\": \"RECURRING\",\n      \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\", // auto-generated each run (SUB_<timestamp>)\n      \"authWorkflowType\": \"{{auth_workflow_type}}\", // TRANSACTION or PENNY_DROP\n      \"amountType\": \"FIXED\", // FIXED or VARIABLE\n      \"maxAmount\": {{max_amount}}, // max redemption amount in paise (max 1500000)\n      \"productType\": \"UPI_MANDATE\",\n      \"frequency\": \"{{frequency}}\", // DAILY / WEEKLY / MONTHLY / YEARLY / etc.\n      \"expireAt\": {{subscription_expire_at}} // mandate validity in epoch ms (default 30 years)\n    },\n    \"metaInfo\": {\n      \"udf1\": \"udf1\" // optional passthrough fields udf1-udf15\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/paylinks/v1/pay",
+              "host": ["{{api_base_url}}"],
+              "path": ["paylinks", "v1", "pay"]
+            },
+            "description": "Create a payment link that sets up a UPI Autopay mandate. Returns orderId + paylinkUrl + state ACTIVE. https://developer.phonepe.com/payment-gateway/autopay/paylinks-autopay/api-integration/"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('merchant_order_id', 'ORDER_' + Date.now());",
+                  "pm.environment.set('merchant_subscription_id', 'SUB_' + Date.now());",
+                  "if (!pm.environment.get('paylink_amount')) { pm.environment.set('paylink_amount', '200'); }",
+                  "pm.environment.set('paylink_expire_at', String(Date.now() + 24 * 60 * 60 * 1000));",
+                  "if (!pm.environment.get('subscription_expire_at')) { pm.environment.set('subscription_expire_at', String(Date.now() + 365 * 24 * 60 * 60 * 1000)); }",
+                  "if (!pm.environment.get('max_amount')) { pm.environment.set('max_amount', '1500000'); }",
+                  "if (!pm.environment.get('auth_workflow_type')) { pm.environment.set('auth_workflow_type', 'TRANSACTION'); }",
+                  "if (!pm.environment.get('frequency')) { pm.environment.set('frequency', 'MONTHLY'); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Paylink created', function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+                  "const data = pm.response.json();",
+                  "if (data && data.orderId) { pm.environment.set('order_id', data.orderId); }",
+                  "if (data && data.paylinkUrl) { pm.environment.set('paylink_url', data.paylinkUrl); }"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Redemption",
+      "item": [
+        {
+          "name": "Notify Redemption",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{redemption_order_id}}\", // auto-generated each run (REDEEM_<timestamp>)\n  \"amount\": {{redemption_amount}}, // amount to debit in paise (min 100, <= mandate maxAmount)\n  \"paymentFlow\": {\n    \"type\": \"SUBSCRIPTION_CHECKOUT_REDEMPTION\",\n    \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\", // the mandate to debit\n    \"redemptionRetryStrategy\": \"STANDARD\", // STANDARD or CUSTOM\n    \"autoDebit\": false // false = notify now and execute later (mandatory 24h gap); true = auto debit after gap\n  }\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/subscriptions/notify",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "subscriptions", "notify"]
+            },
+            "description": "Notify the customer of an upcoming debit (mandatory 24h before execution). Returns orderId + state NOTIFICATION_IN_PROGRESS. https://developer.phonepe.com/payment-gateway/autopay/paylinks-autopay/api-integration/"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('redemption_order_id', 'REDEEM_' + Date.now());",
+                  "if (!pm.environment.get('redemption_amount')) { pm.environment.set('redemption_amount', '100'); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Notify accepted', function () { pm.expect(pm.response.code).to.be.oneOf([200, 201]); });",
+                  "const data = pm.response.json();",
+                  "if (data && data.orderId) { pm.environment.set('redemption_platform_order_id', data.orderId); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Execute Redemption",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchantOrderId\": \"{{redemption_order_id}}\" // the merchantOrderId used in Notify Redemption\n}"
+            },
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/subscriptions/redeem",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "subscriptions", "redeem"]
+            },
+            "description": "Execute the notified redemption (after the mandatory 24h gap). Returns transactionId + state PENDING. https://developer.phonepe.com/payment-gateway/autopay/paylinks-autopay/api-integration/"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (data && data.transactionId) { pm.environment.set('transaction_id', data.transactionId); }"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Status",
+      "item": [
+        {
+          "name": "Order Status",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "url": {
+              "raw": "{{api_base_url}}/checkout/v2/order/{{redemption_order_id}}/status?details=true",
+              "host": ["{{api_base_url}}"],
+              "path": ["checkout", "v2", "order", "{{redemption_order_id}}", "status"],
+              "query": [ { "key": "details", "value": "true" } ]
+            },
+            "description": "Fetch the status of a setup or redemption order by merchantOrderId."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks (Mock Server)",
+      "description": "Sample PhonePe paylink/subscription callbacks. Right-click this folder -> Mock Collection to create a Postman mock server, then set mock_base_url and webhook_auth_sha256.",
+      "item": [
+        {
+          "name": "Subscription Setup Completed (sample)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"subscription.setup.order.completed\",\n  \"payload\": {\n    \"merchantOrderId\": \"{{merchant_order_id}}\",\n    \"merchantSubscriptionId\": \"{{merchant_subscription_id}}\",\n    \"orderId\": \"{{order_id}}\",\n    \"state\": \"COMPLETED\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{mock_base_url}}/paylinks-autopay/webhook",
+              "host": ["{{mock_base_url}}"],
+              "path": ["paylinks-autopay", "webhook"]
+            },
+            "description": "Sample subscription setup completed callback."
+          },
+          "response": [
+            {
+              "name": "Subscription Setup Completed",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" },
+                  { "key": "Authorization", "value": "{{webhook_auth_sha256}}" }
+                ],
+                "body": { "mode": "raw", "raw": "{\n  \"event\": \"subscription.setup.order.completed\"\n}" },
+                "url": {
+                  "raw": "{{mock_base_url}}/paylinks-autopay/webhook",
+                  "host": ["{{mock_base_url}}"],
+                  "path": ["paylinks-autopay", "webhook"]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "cookie": [],
+              "body": "{\n  \"event\": \"subscription.setup.order.completed\",\n  \"payload\": {\n    \"merchantOrderId\": \"merchantOrderId\",\n    \"merchantSubscriptionId\": \"merchantSubscriptionId\",\n    \"orderId\": \"OMO123\",\n    \"state\": \"COMPLETED\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
